@@ -1,5 +1,33 @@
 @import 'frappe-ui/style.css';
 
+/* FirmAdapt brand overrides */
+:root {
+  --p-brand-accent: #32d742;
+  --p-brand-accent-hover: #26b836;
+  --p-brand-bg: #060d17;
+}
+
+:root,
+[data-theme='light'] {
+  --p-primary-500: #32d742;
+  --p-primary-600: #26b836;
+  --p-primary-700: #1f9a2d;
+  --p-surface-primary-primary: #32d742;
+  --p-surface-primary-hover: #26b836;
+  --ion-color-primary: #32d742;
+}
+
+[data-theme='dark'] {
+  --p-primary-500: #32d742;
+  --p-primary-600: #26b836;
+  --p-surface-primary-primary: #32d742;
+  --p-surface-primary-hover: #26b836;
+  --p-surface-white: #060d17;
+  --p-surface-gray-1: #0d1622;
+  --p-surface-gray-2: #152033;
+  --ion-color-primary: #32d742;
+}
+
 @layer components {
   .prose-f {
     @apply break-all
