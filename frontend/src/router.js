@@ -89,6 +89,21 @@ const routes = [
     name: 'DataImportList',
     component: () => import('@/pages/DataImport.vue'),
   },
+  // FirmAdapt — Lead Email Conflict admin page (Module 0b SPA).
+  // List of cross-owner email duplicates plus a per-conflict
+  // resolution form. Admin-gated server-side by
+  // firmadapt_crm.lead_conflicts.is_conflict_admin().
+  {
+    path: '/conflicts',
+    name: 'LeadConflicts',
+    component: () => import('@/pages/LeadConflicts.vue'),
+  },
+  {
+    path: '/conflicts/:name',
+    name: 'LeadConflict',
+    component: () => import('@/pages/LeadConflictDetail.vue'),
+    props: true,
+  },
   {
     path: '/data-import/doctype/:doctype',
     name: 'NewDataImport',

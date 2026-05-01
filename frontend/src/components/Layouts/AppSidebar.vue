@@ -151,6 +151,8 @@
 <script setup>
 import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
 import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
+// FirmAdapt Module 0b: alert-triangle icon for the Lead Conflicts nav entry.
+import AlertTriangleIcon from '~icons/lucide/triangle-alert'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -184,7 +186,7 @@ import { sessionStore } from '@/stores/session'
 import { showSettings, activeSettingsPage } from '@/composables/settings'
 import { showChangePasswordModal } from '@/composables/modals'
 import { useBroadcast } from '@/composables/useBroadcast.js'
-import { FeatherIcon, call } from 'frappe-ui'
+import { FeatherIcon, call, createResource } from 'frappe-ui'
 import {
   SignupBanner,
   TrialBanner,
@@ -211,6 +213,32 @@ const isSidebarCollapsed = useStorage('isSidebarCollapsed', false)
 
 const isFCSite = ref(window.is_fc_site)
 const isDemoSite = ref(window.is_demo_site)
+
+// FirmAdapt Module 0b — server-side admin check that drives the
+// "Lead Conflicts" nav entry. The existing isManager() helper from
+// the users store doesn't include "Autoklose Admin", so we ask the
+// server. Cheap call, fired once on sidebar mount, cached.
+const conflictAdminFlag = ref(false)
+const conflictCount = ref(0)
+const conflictAdminCheck = createResource({
+  url: 'firmadapt_crm.lead_conflicts.is_conflict_admin',
+  auto: true,
+  onSuccess(v) {
+    conflictAdminFlag.value = !!v
+    if (v) {
+      conflictCountResource.fetch()
+    }
+  },
+  onError() {
+    conflictAdminFlag.value = false
+  },
+})
+const conflictCountResource = createResource({
+  url: 'firmadapt_crm.lead_conflicts.get_open_conflict_count',
+  onSuccess(n) {
+    conflictCount.value = Number(n) || 0
+  },
+})
 
 const links = [
   {
@@ -252,6 +280,18 @@ const links = [
     label: 'Call Logs',
     icon: PhoneIcon,
     to: 'Call Logs',
+  },
+  // FirmAdapt Module 0b: admin-only Lead Email Conflict tray.
+  // Visibility is controlled server-side via
+  // firmadapt_crm.lead_conflicts.is_conflict_admin so the entry shows
+  // for any of {System Manager, Sales Manager, Autoklose Admin} —
+  // broader than the existing isManager() check which only covers the
+  // first two. Returns 0 (and effectively hides) for non-admins.
+  {
+    label: 'Lead Conflicts',
+    icon: AlertTriangleIcon,
+    to: 'LeadConflicts',
+    condition: () => conflictAdminFlag.value,
   },
 ]
 

@@ -41,6 +41,14 @@
       />
     </template>
   </LayoutHeader>
+  <!-- FirmAdapt Module 0b: surfaces the freeze state when this lead is
+       part of an open Lead Email Conflict. Click-through goes to the
+       admin resolution page. -->
+  <LeadConflictBanner
+    v-if="doc.name"
+    :frozen="doc.custom_lead_email_conflict_frozen"
+    :leadName="leadId"
+  />
   <div v-if="doc.name" class="flex h-full overflow-hidden">
     <Tabs
       v-model="tabIndex"
@@ -258,6 +266,7 @@ import FilesUploader from '@/components/FilesUploader/FilesUploader.vue'
 import SidePanelLayout from '@/components/SidePanelLayout.vue'
 import SLASection from '@/components/SLASection.vue'
 import CustomActions from '@/components/CustomActions.vue'
+import LeadConflictBanner from '@/components/LeadConflictBanner.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {
   openWebsite,
