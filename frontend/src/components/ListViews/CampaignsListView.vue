@@ -133,6 +133,7 @@ import {
   ListRowItem,
   Tooltip,
 } from 'frappe-ui'
+import { parseColor } from '@/utils'
 import { useRoute } from 'vue-router'
 
 defineProps({
@@ -162,9 +163,16 @@ const STATUS_COLOR = {
   archived: 'gray',
 }
 
+// IndicatorIcon's stroke="currentColor" — needs a Tailwind text-color
+// class (e.g. !text-orange-600). parseColor() turns the raw status
+// color name into that class. Without parseColor, IndicatorIcon
+// inherits the parent text color and all dots paint dark.
+// (KanbanView wraps with parseColor itself; LeadsListView's status
+// colors come pre-parsed from the statuses store. Our inline path
+// has to do the parse explicitly.)
 function getStatusColor(item) {
   const value = typeof item === 'object' ? item?.label : item
-  return STATUS_COLOR[value] || 'gray'
+  return parseColor(STATUS_COLOR[value] || 'gray')
 }
 
 function formatRecipientCount(item) {

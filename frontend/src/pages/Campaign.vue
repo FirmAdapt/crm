@@ -15,7 +15,10 @@
         size="md"
       >
         <template #prefix>
-          <IndicatorIcon :class="STATUS_COLOR[doc.status] || 'gray'" />
+          <!-- parseColor turns the raw color name into a Tailwind
+               text-color class so IndicatorIcon's stroke="currentColor"
+               actually paints. Without it the dot inherits dark. -->
+          <IndicatorIcon :class="parseColor(STATUS_COLOR[doc.status] || 'gray')" />
         </template>
       </Badge>
       <Button
@@ -294,7 +297,7 @@ import {
   createResource,
   toast,
 } from 'frappe-ui'
-import { sanitizeHTML, formatDate, timeAgo } from '@/utils'
+import { sanitizeHTML, formatDate, timeAgo, parseColor } from '@/utils'
 import { useRoute, useRouter } from 'vue-router'
 import { computed, h, ref, watch } from 'vue'
 

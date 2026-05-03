@@ -150,6 +150,7 @@ import KanbanView from '@/components/Kanban/KanbanView.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import { Badge } from 'frappe-ui'
 import { useStorage } from '@vueuse/core'
+import { parseColor } from '@/utils'
 import { useRoute } from 'vue-router'
 import { ref, computed, watch } from 'vue'
 
@@ -181,9 +182,14 @@ const STATUS_COLOR = {
   archived: 'gray',
 }
 
+// IndicatorIcon needs a Tailwind text-color class (parseColor turns
+// 'orange' into '!text-orange-600'); without it, the icon inherits
+// the parent text color and dots render dark. KanbanView's built-in
+// header template already wraps with parseColor — only our custom
+// kanban-card title/fields templates need this on top.
 function getStatusColor(item) {
   const value = typeof item === 'object' ? item?.label : item
-  return STATUS_COLOR[value] || 'gray'
+  return parseColor(STATUS_COLOR[value] || 'gray')
 }
 
 function formatRecipientCount(item) {
