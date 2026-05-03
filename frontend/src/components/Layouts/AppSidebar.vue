@@ -153,6 +153,8 @@ import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
 import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
 // FirmAdapt Module 0b: alert-triangle icon for the Lead Conflicts nav entry.
 import AlertTriangleIcon from '~icons/lucide/triangle-alert'
+// FirmAdapt Module 1: megaphone icon for the Autoklose Campaigns nav entry.
+import MegaphoneIcon from '~icons/lucide/megaphone'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -240,6 +242,22 @@ const conflictCountResource = createResource({
   },
 })
 
+// FirmAdapt Module 1 — drives the "Autoklose Campaigns" nav entry. True
+// for any user with an Autoklose role (User or Admin) plus the standard
+// admin bypass set (System Manager, Sales Manager). Same pattern as the
+// conflict admin check above: cheap, fired once on sidebar mount.
+const autokloseUserFlag = ref(false)
+const autokloseUserCheck = createResource({
+  url: 'firmadapt_crm.permissions.is_autoklose_user',
+  auto: true,
+  onSuccess(v) {
+    autokloseUserFlag.value = !!v
+  },
+  onError() {
+    autokloseUserFlag.value = false
+  },
+})
+
 const links = [
   {
     label: 'Dashboard',
@@ -292,6 +310,18 @@ const links = [
     icon: AlertTriangleIcon,
     to: 'LeadConflicts',
     condition: () => conflictAdminFlag.value,
+  },
+  // FirmAdapt Module 1: Autoklose Campaign cache entry. Visible to any
+  // user with an Autoklose role (gated server-side by
+  // firmadapt_crm.permissions.is_autoklose_user). The list page itself
+  // applies Pattern A row filtering — non-admins only see campaigns
+  // touching their own Leads. The route 'Campaigns' is registered in
+  // router.js (Phase A.2 item 2).
+  {
+    label: 'Campaigns',
+    icon: MegaphoneIcon,
+    to: 'Campaigns',
+    condition: () => autokloseUserFlag.value,
   },
 ]
 
