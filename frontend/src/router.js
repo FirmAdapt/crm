@@ -104,6 +104,26 @@ const routes = [
     component: () => import('@/pages/LeadConflictDetail.vue'),
     props: true,
   },
+  // FirmAdapt — Autoklose Campaign cache (Module 1 / Phase A.2).
+  // List page mirrors the Leads pattern (supports list / kanban /
+  // group_by view types via the :viewType? param + the route guard
+  // below). Detail page mounts on /campaigns/:campaignId — campaign
+  // IDs are the Autoklose-side numeric ID, used as the doc name via
+  // the doctype's `autoname: field:campaign_id`. Sidebar visibility
+  // is gated by firmadapt_crm.permissions.is_autoklose_user(); list
+  // rows are filtered per-user by Pattern A in permissions.py.
+  {
+    alias: '/campaigns',
+    path: '/campaigns/view/:viewType?',
+    name: 'Campaigns',
+    component: () => import('@/pages/Campaigns.vue'),
+  },
+  {
+    path: '/campaigns/:campaignId',
+    name: 'Campaign',
+    component: () => import('@/pages/Campaign.vue'),
+    props: true,
+  },
   {
     path: '/data-import/doctype/:doctype',
     name: 'NewDataImport',
@@ -189,6 +209,11 @@ router.beforeEach(async (to, from, next) => {
     const activeTab = localStorage.getItem(storageKey) || 'activity'
     const hash = '#' + activeTab
     next({ ...to, hash })
+  } else if (to.name === 'Campaign' && !to.hash) {
+    // FirmAdapt Module 1 — restore last-active tab on campaign detail
+    // page (same pattern as Lead/Deal above; default = overview).
+    const activeTab = localStorage.getItem('lastCampaignTab') || 'overview'
+    next({ ...to, hash: '#' + activeTab })
   } else if (
     [
       'Leads',
@@ -198,6 +223,7 @@ router.beforeEach(async (to, from, next) => {
       'Notes',
       'Tasks',
       'Call Logs',
+      'Campaigns',
     ].includes(to.name) &&
     !to.query?.view
   ) {
@@ -216,6 +242,7 @@ router.beforeEach(async (to, from, next) => {
         Notes: 'FCRM Note',
         Tasks: 'CRM Task',
         'Call Logs': 'CRM Call Log',
+        Campaigns: 'Autoklose Campaign',
       }
 
       const doctype = doctypeMap[to.name]
