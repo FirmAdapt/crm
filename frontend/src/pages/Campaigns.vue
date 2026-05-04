@@ -312,6 +312,15 @@ function getKanbanRows(data, _columns) {
 // finished renders blue, etc. — matching the chip filter and Desk
 // list-view badges. Without this the kanban headers fall back to a
 // hash-cycle (paused=red, finished=pink) regardless of semantics.
+//
+// CRITICAL: must set color on EVERY column, not just matched ones. The
+// kanban API includes a `name=""` placeholder column for rows with no
+// status. If we only set colors for matched names, that empty column
+// has `color=undefined` AND KanbanView's `has_color` becomes truthy
+// (some columns are set), so the auto-cycle skips. The empty column
+// then renders its header indicator with `!text-undefined-600` —
+// parseColor(undefined). Falling back to 'gray' for any unmatched
+// column keeps the kanban consistent.
 watch(
   () => campaigns.value?.data,
   (data) => {
@@ -320,9 +329,7 @@ watch(
     if (!Array.isArray(cols)) return
     cols.forEach((c) => {
       if (!c.column) return
-      const value = c.column.name
-      const mapped = STATUS_COLOR[value]
-      if (mapped) c.column.color = mapped
+      c.column.color = STATUS_COLOR[c.column.name] || 'gray'
     })
   },
   { immediate: true, deep: false },
