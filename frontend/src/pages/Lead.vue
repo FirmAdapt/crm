@@ -190,6 +190,12 @@
         v-model="doc"
         @updateField="updateField"
       />
+      <!-- FirmAdapt Module 1 (Phase A.2 / Item 5): "Autoklose Campaigns"
+           panel listing campaigns whose recipients link to this Lead.
+           Self-gates on the user's Autoklose role + on having any
+           campaign rows; renders nothing otherwise so the side panel
+           layout is unaffected. -->
+      <LeadAutoklosePanel :leadId="leadId" />
       <div
         v-if="sections.data"
         class="flex flex-1 flex-col justify-between overflow-hidden"
@@ -267,6 +273,9 @@ import SidePanelLayout from '@/components/SidePanelLayout.vue'
 import SLASection from '@/components/SLASection.vue'
 import CustomActions from '@/components/CustomActions.vue'
 import LeadConflictBanner from '@/components/LeadConflictBanner.vue'
+// FirmAdapt Module 1 (Phase A.2 / Item 5) — side-panel widget that
+// lists Autoklose Campaigns whose recipients link to this Lead.
+import LeadAutoklosePanel from '@/components/LeadAutoklosePanel.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {
   openWebsite,
