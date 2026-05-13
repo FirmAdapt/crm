@@ -5,20 +5,27 @@
        - The Lead has no email address (Autoklose requires one)
        - There are no Autoklose email accounts connected -->
   <div v-if="visible" class="flex items-center">
-    <!-- Primary send button. Picker chevron lives on the right. -->
-    <Button
-      :loading="sending"
-      :disabled="disabled"
-      :variant="'outline'"
-      :tooltip="tooltip"
-      class="rounded-r-none"
-      @click="onSend"
-    >
-      <template #prefix>
-        <FeatherIcon name="send" class="h-4 w-4" />
-      </template>
-      <span>{{ buttonLabel }}</span>
-    </Button>
+    <!-- Tooltip wraps the button so hover events fire on the wrapper
+         (not the button itself). Necessary because a disabled HTML
+         <button> swallows pointer events — frappe-ui Button's own
+         :tooltip prop never mounts when the button is disabled, which
+         is exactly the state we most need to explain ("Body is
+         required" / "Autoklose's single-send API doesn't accept
+         attachments" / etc.). -->
+    <Tooltip :text="tooltip">
+      <Button
+        :loading="sending"
+        :disabled="disabled"
+        :variant="'outline'"
+        class="rounded-r-none"
+        @click="onSend"
+      >
+        <template #prefix>
+          <FeatherIcon name="send" class="h-4 w-4" />
+        </template>
+        <span>{{ buttonLabel }}</span>
+      </Button>
+    </Tooltip>
 
     <!-- Email-account picker. When only 1 account exists, hidden — the
          single account is implicit. Clicking the chevron opens a small
@@ -45,6 +52,7 @@ import {
   Button,
   Dropdown,
   FeatherIcon,
+  Tooltip,
   call,
   createResource,
   toast,
