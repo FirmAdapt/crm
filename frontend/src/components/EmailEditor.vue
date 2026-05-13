@@ -175,6 +175,12 @@
           </div>
           <div class="mt-2 flex items-center justify-end space-x-2 sm:mt-0">
             <Button v-bind="discardButtonProps || {}" :label="__('Discard')" />
+            <!-- FirmAdapt Module 1 (Phase A.2 / Item 6.C.B): slot for the
+                 "Send via Autoklose" button next to the standard Send.
+                 Empty by default so non-Autoklose contexts (Deals,
+                 Contacts, etc.) and non-Autoklose users see no
+                 difference in the composer. -->
+            <slot name="extra-actions" />
             <Button
               variant="solid"
               v-bind="submitButtonProps || {}"
