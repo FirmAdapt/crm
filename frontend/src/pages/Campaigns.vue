@@ -18,14 +18,24 @@
   <div
     class="flex items-center gap-2 border-b px-3 py-2 sm:px-5 overflow-x-auto"
   >
+    <!-- Always render Badge in `subtle` variant — using `solid` on gray
+         themes renders near-black (frappe-ui's solid gray is gray-900),
+         which made the Draft/Archived chips look broken when active.
+         The active state is communicated via an outline ring instead;
+         consistent visual treatment across all five status colors. -->
     <Badge
       v-for="opt in STATUS_CHIPS"
       :key="opt.value"
       :label="__(opt.label)"
       :theme="opt.theme"
-      :variant="statusFilter === opt.value ? 'solid' : 'subtle'"
+      variant="subtle"
       size="md"
-      class="cursor-pointer flex-shrink-0"
+      class="cursor-pointer flex-shrink-0 transition-shadow"
+      :class="
+        statusFilter === opt.value
+          ? 'ring-2 ring-offset-1 ring-ink-gray-7'
+          : ''
+      "
       @click="toggleStatusChip(opt.value)"
     />
     <Button
@@ -57,12 +67,26 @@
        last paints the UI — list happens to win, kanban happens to lose
        and shows the unfiltered data. We guard render until the wire
        state matches our chip state, so the unfiltered response (which
-       could land last) doesn't get bound to the user's view. -->
+       could land last) doesn't get bound to the user's view.
+
+       Visual: inline spinner + status-aware copy ("Applying filter…"
+       when a chip is active, "Loading campaigns…" otherwise) so the
+       brief flicker (~80–100ms typical) reads as meaningful activity
+       rather than a static stall. -->
   <div
     v-if="route.params.viewType == 'kanban' && !kanbanReady"
-    class="flex h-full items-center justify-center text-ink-gray-5"
+    class="flex h-full items-center justify-center"
   >
-    {{ __('Loading campaigns…') }}
+    <div class="flex items-center gap-2 text-sm text-ink-gray-5">
+      <FeatherIcon name="loader" class="h-4 w-4 animate-spin" />
+      <span>
+        {{
+          statusFilter
+            ? __('Applying filter…')
+            : __('Loading campaigns…')
+        }}
+      </span>
+    </div>
   </div>
   <KanbanView
     v-else-if="route.params.viewType == 'kanban'"
@@ -148,7 +172,7 @@ import CampaignsListView from '@/components/ListViews/CampaignsListView.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import KanbanView from '@/components/Kanban/KanbanView.vue'
 import ViewControls from '@/components/ViewControls.vue'
-import { Badge } from 'frappe-ui'
+import { Badge, FeatherIcon } from 'frappe-ui'
 import { useStorage } from '@vueuse/core'
 import { parseColor } from '@/utils'
 import { useRoute } from 'vue-router'

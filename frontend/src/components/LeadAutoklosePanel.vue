@@ -35,6 +35,14 @@
             {{ timeAgo(c.last_contacted_at) }}
           </span>
         </Tooltip>
+        <!-- Autoklose returns last_contacted_at = null for campaigns
+             whose recipients haven't received an email yet (campaign
+             scheduled but not sent, or the lead just got added). Show
+             an explicit placeholder so the row doesn't read as an
+             empty/broken state. -->
+        <span v-else class="text-xs italic text-ink-gray-4 shrink-0">
+          {{ __('never contacted') }}
+        </span>
       </router-link>
     </div>
   </div>
