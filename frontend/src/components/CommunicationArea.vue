@@ -55,7 +55,25 @@
       :placeholder="
         __('Hi John, \n\nCan you please provide more details on this...')
       "
-    />
+    >
+      <!-- FirmAdapt Module 1 (Phase A.2 / Item 6.C.B): "Send via
+           Autoklose" path next to the standard Send button. The button
+           component self-gates (Lead-only doctype, Autoklose role,
+           Lead has email, accounts connected) so on Deal/Contact
+           pages or for non-Autoklose users it renders nothing. -->
+      <template #extra-actions>
+        <AutokloseSendButton
+          :leadName="doc.name"
+          :leadEmail="doc.email"
+          :doctype="doctype"
+          :subject="newEmailEditor?.subject || ''"
+          :body="newEmail"
+          :hasAttachments="attachments?.length > 0"
+          :frozen="!!doc.custom_lead_email_conflict_frozen"
+          @sent="onAutokloseSent"
+        />
+      </template>
+    </EmailEditor>
   </div>
   <div v-show="showCommentBox">
     <CommentBox
@@ -84,6 +102,9 @@
 
 <script setup>
 import EmailEditor from '@/components/EmailEditor.vue'
+// FirmAdapt Module 1 (Phase A.2 / Item 6.C.B) — secondary "Send via
+// Autoklose" path on the Lead's email composer.
+import AutokloseSendButton from '@/components/AutokloseSendButton.vue'
 import CommentBox from '@/components/CommentBox.vue'
 import CommentIcon from '@/components/Icons/CommentIcon.vue'
 import Email2Icon from '@/components/Icons/Email2Icon.vue'
@@ -265,6 +286,20 @@ async function submitEmail() {
   emit('scroll')
   capture('email_sent', { doctype: props.doctype })
   updateOnboardingStep('send_first_email')
+}
+
+// FirmAdapt Module 1 (Phase A.2 / Item 6.C.B): success handler for the
+// Autoklose-path send. Mirrors submitEmail's cleanup — close the editor,
+// clear the buffer, trigger an Activities reload so the new
+// Communication row (logged server-side by send_single_email) shows up
+// in the timeline. Toast is owned by AutokloseSendButton itself.
+function onAutokloseSent() {
+  showEmailBox.value = false
+  newEmail.value = ''
+  attachments.value = []
+  reload.value = true
+  emit('scroll')
+  capture('email_sent_via_autoklose', { doctype: props.doctype })
 }
 
 async function submitComment() {
