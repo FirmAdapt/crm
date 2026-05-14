@@ -9,8 +9,8 @@
       </span>
       <Badge
         v-if="doc.status"
-        :label="capitalize(doc.status)"
-        :theme="STATUS_COLOR[doc.status] || 'gray'"
+        :label="capitalize(displayStatus)"
+        :theme="STATUS_COLOR[displayStatus] || 'gray'"
         variant="subtle"
         size="md"
       >
@@ -18,9 +18,21 @@
           <!-- parseColor turns the raw color name into a Tailwind
                text-color class so IndicatorIcon's stroke="currentColor"
                actually paints. Without it the dot inherits dark. -->
-          <IndicatorIcon :class="parseColor(STATUS_COLOR[doc.status] || 'gray')" />
+          <IndicatorIcon :class="parseColor(STATUS_COLOR[displayStatus] || 'gray')" />
         </template>
       </Badge>
+      <!-- Module 2 cadence controls: one button shows per state, gated on
+           the same admin flag as Refresh. Backend enforces the same gate +
+           validates the transition, so this is purely UX hiding. -->
+      <Button
+        v-if="autokloseAdminFlag && cadenceAction"
+        :label="cadenceAction.label"
+        :icon-left="cadenceAction.icon"
+        :theme="cadenceAction.theme"
+        variant="solid"
+        :loading="cadenceBusy"
+        @click="openCadenceConfirm(cadenceAction)"
+      />
       <Button
         v-if="autokloseAdminFlag"
         :label="__('Refresh now')"
@@ -281,6 +293,38 @@
       </div>
     </div>
   </div>
+
+  <!-- Module 2 — Cadence confirmation dialog. Reused for Start / Pause /
+       Resume; the pendingCadence ref carries which action the admin
+       clicked. Single dialog keeps the markup simple and avoids three
+       parallel v-models. -->
+  <Dialog
+    v-model="cadenceConfirmOpen"
+    :options="{
+      title: pendingCadence?.confirmTitle || '',
+      size: 'sm',
+      actions: [
+        {
+          label: pendingCadence?.confirmCta || __('Confirm'),
+          variant: 'solid',
+          theme: pendingCadence?.theme || 'blue',
+          loading: cadenceBusy,
+          onClick: runPendingCadence,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{ pendingCadence?.confirmBody }}
+      </p>
+      <p v-if="doc" class="mt-3 text-sm text-ink-gray-9">
+        <span class="text-ink-gray-5">{{ __('Campaign') }}:</span>
+        <span class="ml-1 font-medium">{{ doc.campaign_name || doc.name }}</span>
+      </p>
+    </template>
+  </Dialog>
 </template>
 
 <script setup>
@@ -290,6 +334,7 @@ import {
   Badge,
   Breadcrumbs,
   Button,
+  Dialog,
   Tabs,
   call,
   createDocumentResource,
@@ -308,8 +353,18 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 
+// Status color map for the badge + cadence buttons.
+//
+// `in_progress` is the documented Autoklose API value for "running"; the
+// /campaigns list endpoint historically returns `active` for the same
+// state. We map both to green and treat them as synonyms in displayStatus
+// below. `pending` shows up briefly while Autoklose is provisioning a
+// scheduled start — render as orange (transitional) rather than green so
+// it visibly differs from the running state.
 const STATUS_COLOR = {
   active: 'green',
+  in_progress: 'green',
+  pending: 'orange',
   paused: 'orange',
   draft: 'gray',
   finished: 'blue',
@@ -332,6 +387,15 @@ const loadError = computed(() => {
   const e = campaign.error
   if (!e) return ''
   return e.messages?.join(', ') || e.message || String(e)
+})
+
+// Canonical "running" string for the UI. Autoklose returns both `active`
+// (list endpoint) and `in_progress` (status endpoint) for the same state;
+// the badge + cadence button logic uses this so we don't have to OR-check
+// both everywhere.
+const displayStatus = computed(() => {
+  const s = (doc.value?.status || '').toLowerCase()
+  return s === 'in_progress' ? 'active' : s
 })
 
 // ----- Recipients (paginated child list) -----------------------------------
@@ -429,6 +493,123 @@ async function onRefresh() {
     })
   } finally {
     refreshing.value = false
+  }
+}
+
+// ----- Module 2: Cadence controls (Pause / Resume / Start) -----------------
+//
+// One button slot in the header; which action shows depends on the current
+// campaign status (only admins see anything — autokloseAdminFlag gates the
+// whole block in the template). Click → confirm dialog → backend PATCH →
+// re-sync via the existing campaign.reload() pipeline so the badge + tabs
+// pick up the new state immediately.
+//
+// We deliberately don't surface archive / finished transitions from the
+// CRM — those are higher-impact and should stay in the Autoklose UI.
+// Anything outside draft / active / paused renders no button (e.g.
+// archived campaigns are read-only from here).
+const cadenceAction = computed(() => {
+  const s = displayStatus.value
+  if (s === 'active') {
+    return {
+      key: 'pause',
+      apiStatus: 'paused',
+      label: __('Pause'),
+      icon: 'pause',
+      // frappe-ui Button only supports themes gray|blue|green|red. We
+      // semantically want "warning orange" here (matches the Paused
+      // status badge, which the Badge component *does* render orange),
+      // but Button silently falls through to unstyled for unknown
+      // themes. Map to `red` — closest valid theme conveying "this
+      // halts an outbound process." Resume/Start stay green (positive
+      // action).
+      theme: 'red',
+      confirmTitle: __('Pause this campaign?'),
+      confirmBody: __(
+        'Autoklose will stop sending emails for this campaign until it is resumed. In-flight sends already queued may still go out.',
+      ),
+      confirmCta: __('Pause campaign'),
+      successMessage: __('Campaign paused.'),
+    }
+  }
+  if (s === 'paused') {
+    return {
+      key: 'resume',
+      apiStatus: 'in_progress',
+      label: __('Resume'),
+      icon: 'play',
+      theme: 'green',
+      confirmTitle: __('Resume this campaign?'),
+      confirmBody: __(
+        'Autoklose will pick up sending where it left off and follow the configured schedule + sending days.',
+      ),
+      confirmCta: __('Resume campaign'),
+      successMessage: __('Campaign resumed.'),
+    }
+  }
+  if (s === 'draft') {
+    return {
+      key: 'start',
+      apiStatus: 'in_progress',
+      label: __('Start'),
+      icon: 'play',
+      theme: 'green',
+      confirmTitle: __('Start this campaign?'),
+      confirmBody: __(
+        'Autoklose will begin sending emails to recipients according to the schedule + sequence configured on this campaign.',
+      ),
+      confirmCta: __('Start campaign'),
+      successMessage: __('Campaign started.'),
+    }
+  }
+  // finished / archived / unknown — no button rendered.
+  return null
+})
+
+const cadenceConfirmOpen = ref(false)
+const pendingCadence = ref(null)
+const cadenceBusy = ref(false)
+
+function openCadenceConfirm(action) {
+  pendingCadence.value = action
+  cadenceConfirmOpen.value = true
+}
+
+async function runPendingCadence() {
+  const action = pendingCadence.value
+  if (!action) return
+  cadenceBusy.value = true
+  try {
+    await call(
+      'firmadapt_crm.integrations.autoklose.api.set_campaign_status',
+      {
+        campaign_id: props.campaignId,
+        status: action.apiStatus,
+      },
+    )
+    // Re-sync the doc + recipients so the UI reflects the new state.
+    // set_campaign_status calls refresh_campaign_detail internally, so
+    // the cached row is fresh — reload() just pulls the latest local
+    // values. recipients.reload() isn't strictly needed (status flips
+    // don't change recipient set) but keeps things consistent if
+    // Autoklose's auto-pause-on-add-recipient kicks in.
+    campaign.reload()
+    recipients.reload()
+    recipientsCount.reload()
+    toast.create({ message: action.successMessage, type: 'success' })
+    cadenceConfirmOpen.value = false
+    pendingCadence.value = null
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        e?._server_messages ||
+        __('Status change failed.'),
+      type: 'error',
+    })
+  } finally {
+    cadenceBusy.value = false
   }
 }
 

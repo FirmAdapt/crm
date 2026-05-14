@@ -155,8 +155,14 @@ const route = useRoute()
 
 // Mirror of the Frappe Desk badge mapping (autoklose_campaign_list.js).
 // Keep in sync if a new Autoklose status appears.
+//
+// Module 2: added `in_progress` (the API's documented running label) and
+// `pending` (transitional). `in_progress` shares the running-state green
+// with the older `active` label that the /campaigns list endpoint returns.
 const STATUS_COLOR = {
   active: 'green',
+  in_progress: 'green',
+  pending: 'orange',
   paused: 'orange',
   draft: 'gray',
   finished: 'blue',

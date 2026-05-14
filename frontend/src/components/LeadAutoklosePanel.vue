@@ -62,8 +62,15 @@ const props = defineProps({
 // Kept locally rather than imported because it's tiny and the SPA hasn't
 // converged on a shared status-color module yet (good follow-up if the
 // number of Autoklose-touching components grows).
+//
+// Module 2: added `in_progress` + `pending`. `in_progress` is the API's
+// documented "running" value (the list endpoint historically returned
+// `active` for the same state); we color both green. `pending` is a
+// transitional state Autoklose flips through during scheduled starts.
 const STATUS_COLOR = {
   active: 'green',
+  in_progress: 'green',
+  pending: 'orange',
   paused: 'orange',
   draft: 'gray',
   finished: 'blue',

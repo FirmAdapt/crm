@@ -198,8 +198,17 @@ const STATUS_CHIPS = [
   { value: 'archived', label: 'Archived', theme: 'gray'   },
 ]
 
+// Same map as Campaign.vue. `in_progress` is the documented Autoklose API
+// "running" value (returned by /campaigns/{id}/status), `active` is what
+// the /campaigns list endpoint returns for the same state. Map both
+// identically so the row colors stay consistent regardless of which
+// payload populated the cache. `pending` (provisional running) renders
+// orange — same as paused — to make any in-flight state visibly
+// distinct from confirmed-running.
 const STATUS_COLOR = {
   active: 'green',
+  in_progress: 'green',
+  pending: 'orange',
   paused: 'orange',
   draft: 'gray',
   finished: 'blue',
