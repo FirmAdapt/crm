@@ -1,7 +1,13 @@
 import { defineConfig } from 'vitest/config'
+import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
 export default defineConfig({
+  // Vue plugin is required for Vitest to parse .vue SFCs (wave-2
+  // component tests mount real components rather than only importing
+  // pure JS helpers). vite.config.js ships a full dev/prod stack we
+  // skip here — tests don't need it.
+  plugins: [vue()],
   test: {
     globals: true,
     environment: 'happy-dom',
