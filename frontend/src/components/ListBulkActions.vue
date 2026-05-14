@@ -262,6 +262,98 @@ function pushToAutoklose(selections, unselectAll) {
   showPushToAutokloseModal.value = true
 }
 
+// ---- Module Vayne (bulk LinkedIn enrichment) ------------------------------
+//
+// Async via /api/linkedin_scrapings/batch. Confirm dialog quotes the
+// worst-case credit cost (N × 16) so admins don't burn through the
+// monthly budget by accident. The actual cost can be lower if some
+// leads have no LinkedIn URL — those are skipped server-side without
+// burning credits. The webhook handler ingests results and writes
+// audit rows per Lead 1–5 minutes later; we don't block on it here.
+function enrichFromLinkedin(selections, unselectAll) {
+  const ids = Array.from(selections)
+  if (!ids.length) return
+  // Worst-case estimate: 16 credits per profile (with company details).
+  // Vayne returns the true `credits_used` in the batch response, which
+  // we surface in the post-call toast.
+  const worstCaseCredits = ids.length * 16
+  $dialog({
+    title: __('Enrich {0} lead(s) from LinkedIn?', [ids.length]),
+    message: __(
+      'Vayne will fetch the LinkedIn profile for each selected Lead and ' +
+        'fill empty CRM fields (existing values are never overwritten). ' +
+        'Leads without a LinkedIn URL will be skipped. ' +
+        'Estimated cost: up to {0} × 16 = {1} credits. Results land in ' +
+        '1–5 minutes via webhook.',
+      [ids.length, worstCaseCredits],
+    ),
+    variant: 'solid',
+    theme: 'blue',
+    actions: [
+      {
+        label: __('Submit batch'),
+        variant: 'solid',
+        theme: 'blue',
+        onClick: (close) => {
+          capture('vayne_bulk_enrich')
+          call(
+            'firmadapt_crm.integrations.vayne.api.bulk_enrich_leads',
+            { lead_names: ids },
+          )
+            .then((resp) => {
+              renderBulkEnrichResult(resp)
+              list.value?.reload()
+              unselectAll()
+              close()
+            })
+            .catch((e) => {
+              toast.create({
+                message:
+                  e?.messages?.join(', ') ||
+                  e?.message ||
+                  __('Bulk enrich failed.'),
+                type: 'error',
+              })
+            })
+        },
+      },
+      { label: __('Cancel') },
+    ],
+  })
+}
+
+function renderBulkEnrichResult(resp) {
+  const queued = resp?.leads_with_url?.length ?? 0
+  const skipped = resp?.leads_without_url ?? []
+  const creditsUsed = resp?.credits_used ?? 0
+  if (skipped.length === 0) {
+    toast.create({
+      message: __(
+        'Batch submitted — {0} profile(s) queued for enrichment. ' +
+          '{1} credit(s) reserved. Results in 1–5 minutes.',
+        [queued, creditsUsed],
+      ),
+      type: 'success',
+    })
+    return
+  }
+  const failedSummary = skipped
+    .slice(0, 3)
+    .map((f) => `${f.lead}: ${f.reason}`)
+    .join(' · ')
+  const more = skipped.length > 3 ? ` (+${skipped.length - 3} more)` : ''
+  toast.create({
+    message: __(
+      'Batch submitted — {0} queued, {1} skipped. {2} credit(s) reserved. ' +
+        '{3}{4}',
+      [queued, skipped.length, creditsUsed, failedSummary, more],
+    ),
+    type: queued > 0 ? 'warning' : 'error',
+  })
+  // eslint-disable-next-line no-console
+  console.warn('[bulk_enrich_leads] skipped entries:', skipped)
+}
+
 function onPushToAutokloseDone(resp) {
   // Modal calls $emit('done', resp) after the backend returns. resp
   // is the bulk_push_leads payload {ok: [...], failed: [...], total}.
@@ -336,6 +428,14 @@ function bulkActions(selections, unselectAll) {
     actions.push({
       label: __('Push to Autoklose'),
       onClick: () => pushToAutoklose(selections, unselectAll),
+    })
+    // Module Vayne: bulk-enrich selected leads from LinkedIn via Vayne.
+    // Same role + per-lead ownership gate as Push to Autoklose, enforced
+    // server-side; same UX surface so admins find both actions next to
+    // each other in the bulk dropdown.
+    actions.push({
+      label: __('Enrich from LinkedIn'),
+      onClick: () => enrichFromLinkedin(selections, unselectAll),
     })
   }
 

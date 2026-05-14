@@ -34,6 +34,12 @@
           </Button>
         </template>
       </Dropdown>
+      <!-- FirmAdapt Module Vayne — LinkedIn enrichment button. Self-gates on
+           the Autoklose User role. Mounted here next to "Convert to Deal" so
+           it shares the right-header chrome. The parallel Twilio call-button
+           lives elsewhere on this same page (separate branch); placement is
+           kept tight to one component so cross-branch merges stay clean. -->
+      <EnrichButton :lead-doc="doc" @enriched="reloadResources" />
       <Button
         :label="__('Convert to Deal')"
         variant="solid"
@@ -276,6 +282,8 @@ import LeadConflictBanner from '@/components/LeadConflictBanner.vue'
 // FirmAdapt Module 1 (Phase A.2 / Item 5) — side-panel widget that
 // lists Autoklose Campaigns whose recipients link to this Lead.
 import LeadAutoklosePanel from '@/components/LeadAutoklosePanel.vue'
+// FirmAdapt Module Vayne — per-Lead LinkedIn enrichment button.
+import EnrichButton from '@/components/EnrichButton.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {
   openWebsite,
