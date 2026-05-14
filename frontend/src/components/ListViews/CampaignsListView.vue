@@ -104,7 +104,17 @@
       </ListRowItem>
     </ListRows>
     <ListSelectBanner>
-      <template #actions="{ unselectAll }">
+      <template #actions="{ selections, unselectAll }">
+        <!-- Module 6: bulk Pause / Resume live in ListBulkActions under
+             the `Autoklose Campaign` branch. Same pattern as
+             LeadsListView — Dropdown rooted at a more-horizontal icon
+             so the banner stays minimal until the admin opens it. -->
+        <Dropdown
+          v-if="autokloseAdminFlag && listBulkActionsRef"
+          :options="listBulkActionsRef.bulkActions(selections, unselectAll)"
+        >
+          <Button icon="more-horizontal" variant="ghost" />
+        </Dropdown>
         <Button
           variant="ghost"
           :label="__('Clear selection')"
@@ -113,6 +123,15 @@
       </template>
     </ListSelectBanner>
   </ListView>
+  <!-- ListBulkActions mounts off-screen — its only job is to expose the
+       `bulkActions(selections, unselectAll)` factory via the ref above.
+       The Dropdown above renders the array it returns. -->
+  <ListBulkActions
+    ref="listBulkActionsRef"
+    v-model="list"
+    doctype="Autoklose Campaign"
+    :options="{ hideEdit: true, hideAssign: true, hideDelete: true }"
+  />
 </template>
 
 <script setup>
@@ -124,23 +143,34 @@
 // instead, and the slot content replaces the v-for fallback (no rows
 // render). Mirror of the LeadsListView import block.
 import IndicatorIcon from '@/components/Icons/IndicatorIcon.vue'
+import ListBulkActions from '@/components/ListBulkActions.vue'
 import ListRows from '@/components/ListViews/ListRows.vue'
 import {
+  Button,
+  Dropdown,
   ListView,
   ListHeader,
   ListHeaderItem,
   ListSelectBanner,
   ListRowItem,
   Tooltip,
+  createResource,
 } from 'frappe-ui'
 import { parseColor } from '@/utils'
 import { useRoute } from 'vue-router'
+import { ref } from 'vue'
 
 defineProps({
   rows: { type: Array, required: true },
   columns: { type: Array, required: true },
   options: { type: Object, default: () => ({}) },
 })
+
+// Mirrors the v-model:list pattern LeadsListView uses — the parent
+// Campaigns.vue passes `v-model:list="campaigns"`; ListBulkActions
+// needs the list resource so it can call .reload() after a bulk
+// action completes.
+const list = defineModel('list', { type: Object })
 
 const emit = defineEmits([
   'loadMore',
@@ -152,6 +182,19 @@ const emit = defineEmits([
 ])
 
 const route = useRoute()
+
+// Module 6: gate the bulk-actions Dropdown on the same admin flag the
+// per-row Refresh/Cadence buttons use. Non-admins can still select rows
+// (multi-row selection is useful even without write actions — e.g. for
+// future export/star/etc.), but they won't see actions they can't run.
+const listBulkActionsRef = ref(null)
+const autokloseAdminFlag = ref(false)
+createResource({
+  url: 'firmadapt_crm.permissions.is_autoklose_admin',
+  auto: true,
+  onSuccess: (v) => (autokloseAdminFlag.value = !!v),
+  onError: () => (autokloseAdminFlag.value = false),
+})
 
 // Mirror of the Frappe Desk badge mapping (autoklose_campaign_list.js).
 // Keep in sync if a new Autoklose status appears.

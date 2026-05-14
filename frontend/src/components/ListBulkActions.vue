@@ -28,11 +28,21 @@
     :items="showDeleteDocModal.items"
     :reload="reload"
   />
+  <!-- Module 6: bulk Push-to-Autoklose modal lives here because it
+       belongs to the CRM Lead bulk-action surface; mounting it inside
+       the action callback would re-create on every open. -->
+  <PushToAutokloseModal
+    v-if="showPushToAutokloseModal"
+    v-model="showPushToAutokloseModal"
+    :selections="pushSelections"
+    @done="onPushToAutokloseDone"
+  />
 </template>
 
 <script setup>
 import EditValueModal from '@/components/Modals/EditValueModal.vue'
 import AssignmentModal from '@/components/Modals/AssignmentModal.vue'
+import PushToAutokloseModal from '@/components/Modals/PushToAutokloseModal.vue'
 import { setupListCustomizations } from '@/utils'
 import { globalStore } from '@/stores/global'
 import { useTelemetry } from 'frappe-ui/frappe'
@@ -159,6 +169,130 @@ function clearAssignments(selections, unselectAll) {
   })
 }
 
+// ---- Module 6 (Autoklose bulk actions) ------------------------------------
+//
+// Both helpers below show a $dialog confirm, call the corresponding
+// whitelisted backend with the selected ids, and surface a results toast
+// summarizing ok/failed counts. The Push-to-Autoklose flow has an extra
+// step: the admin picks a target campaign in a separate
+// PushToAutokloseModal before the confirm fires.
+
+const showPushToAutokloseModal = ref(false)
+const pushSelections = ref(null)
+const pushUnselectAll = ref(() => {})
+
+function bulkCadence(selections, unselectAll, opts) {
+  const ids = Array.from(selections)
+  if (!ids.length) return
+  $dialog({
+    title: opts.dialogTitle,
+    message: opts.dialogBody + '\n\n' + __('Selected: {0}', [ids.length]),
+    variant: 'solid',
+    theme: opts.ctaTheme,
+    actions: [
+      {
+        label: opts.ctaLabel,
+        variant: 'solid',
+        theme: opts.ctaTheme,
+        onClick: (close) => {
+          capture('autoklose_bulk_cadence', { target: opts.target })
+          call(
+            'firmadapt_crm.integrations.autoklose.api.bulk_set_campaign_status',
+            { campaign_ids: ids, status: opts.target },
+          )
+            .then((resp) => {
+              renderBulkCadenceResult(resp, opts.successPrefix)
+              list.value?.reload()
+              unselectAll()
+              close()
+            })
+            .catch((e) => {
+              toast.create({
+                message:
+                  e?.messages?.join(', ') ||
+                  e?.message ||
+                  __('Bulk action failed.'),
+                type: 'error',
+              })
+            })
+        },
+      },
+      // Explicit Cancel button matches the per-campaign Cadence dialogs
+      // on the detail page (Module 2). Without it the only escape is
+      // the top-right ✕ icon — usable but inconsistent with the rest
+      // of the cadence UX.
+      { label: __('Cancel') },
+    ],
+  })
+}
+
+function renderBulkCadenceResult(resp, successPrefix) {
+  const okCount = resp?.ok?.length ?? 0
+  const failed = resp?.failed ?? []
+  if (failed.length === 0) {
+    toast.create({
+      message: __('{0} {1} campaign(s).', [successPrefix, okCount]),
+      type: 'success',
+    })
+    return
+  }
+  // Mixed result — show ok + failed counts in the toast. Per-id error
+  // detail goes to the console (full structured) so an admin can grep
+  // for the specific failing campaign id rather than parsing a tiny
+  // toast. Same pattern as Frappe's own bulk operation feedback.
+  const failedSummary = failed
+    .slice(0, 3)
+    .map((f) => `${f.id}: ${f.reason}`)
+    .join(' · ')
+  const more = failed.length > 3 ? ` (+${failed.length - 3} more)` : ''
+  toast.create({
+    message: __(
+      '{0} {1} ok, {2} skipped. {3}{4}',
+      [successPrefix, okCount, failed.length, failedSummary, more],
+    ),
+    type: okCount > 0 ? 'warning' : 'error',
+  })
+  // eslint-disable-next-line no-console
+  console.warn('[bulk_set_campaign_status] failed entries:', failed)
+}
+
+function pushToAutoklose(selections, unselectAll) {
+  pushSelections.value = selections
+  pushUnselectAll.value = unselectAll
+  showPushToAutokloseModal.value = true
+}
+
+function onPushToAutokloseDone(resp) {
+  // Modal calls $emit('done', resp) after the backend returns. resp
+  // is the bulk_push_leads payload {ok: [...], failed: [...], total}.
+  const okCount = resp?.ok?.length ?? 0
+  const failed = resp?.failed ?? []
+  if (failed.length === 0) {
+    toast.create({
+      message: __('Pushed {0} lead(s) to Autoklose.', [okCount]),
+      type: 'success',
+    })
+  } else {
+    const failedSummary = failed
+      .slice(0, 3)
+      .map((f) => `${f.lead}: ${f.reason}`)
+      .join(' · ')
+    const more = failed.length > 3 ? ` (+${failed.length - 3} more)` : ''
+    toast.create({
+      message: __(
+        'Pushed {0} ok, {1} skipped. {2}{3}',
+        [okCount, failed.length, failedSummary, more],
+      ),
+      type: okCount > 0 ? 'warning' : 'error',
+    })
+    // eslint-disable-next-line no-console
+    console.warn('[bulk_push_leads] failed entries:', failed)
+  }
+  list.value?.reload()
+  pushUnselectAll.value?.()
+  showPushToAutokloseModal.value = false
+}
+
 const customBulkActions = ref([])
 const customListActions = ref([])
 
@@ -194,6 +328,53 @@ function bulkActions(selections, unselectAll) {
     actions.push({
       label: __('Convert to Deal'),
       onClick: () => convertToDeal(selections, unselectAll),
+    })
+    // Module 6 (Part B): bulk push selected leads into an Autoklose
+    // campaign. Server enforces admin-or-Autoklose-user role + per-lead
+    // ownership; we surface the action to anyone using the Leads list
+    // since the role check at click time will produce the right error.
+    actions.push({
+      label: __('Push to Autoklose'),
+      onClick: () => pushToAutoklose(selections, unselectAll),
+    })
+  }
+
+  // Module 6 (Part A): bulk Pause / Resume on Autoklose Campaign list.
+  // Admin gate is also enforced server-side; the SPA hides the Dropdown
+  // entirely for non-admins (CampaignsListView's autokloseAdminFlag),
+  // so this branch is just the canonical wiring.
+  if (props.doctype === 'Autoklose Campaign') {
+    actions.push({
+      label: __('Pause selected'),
+      onClick: () =>
+        bulkCadence(selections, unselectAll, {
+          target: 'paused',
+          dialogTitle: __('Pause selected campaigns?'),
+          dialogBody: __(
+            'Autoklose will stop sending emails for these campaigns. ' +
+              'Campaigns not currently running will be skipped — you' +
+              "'ll see a per-campaign result list below.",
+          ),
+          ctaLabel: __('Pause campaigns'),
+          ctaTheme: 'red',
+          successPrefix: __('Paused'),
+        }),
+    })
+    actions.push({
+      label: __('Resume selected'),
+      onClick: () =>
+        bulkCadence(selections, unselectAll, {
+          target: 'in_progress',
+          dialogTitle: __('Resume selected campaigns?'),
+          dialogBody: __(
+            'Autoklose will pick up sending where each campaign left ' +
+              'off. Campaigns not currently paused (or draft) will be ' +
+              "skipped — you'll see a per-campaign result list below.",
+          ),
+          ctaLabel: __('Resume campaigns'),
+          ctaTheme: 'green',
+          successPrefix: __('Resumed'),
+        }),
     })
   }
 
