@@ -153,14 +153,28 @@
               / {{ recipientsTotal }}
             </span>
           </span>
-          <Button
-            v-if="recipients.hasNextPage"
-            :label="__('Load more')"
-            variant="subtle"
-            size="sm"
-            :loading="recipients.loading"
-            @click="recipients.next()"
-          />
+          <div class="flex items-center gap-2">
+            <!-- Module 8 — CSV export. Backend enforces _require_push_role,
+                 so showing this unconditionally is fine; non-Autoklose
+                 users would get a 403 on click (rare, since they wouldn't
+                 reach this page anyway — the Campaigns route is gated). -->
+            <Button
+              :label="__('Export CSV')"
+              icon-left="download"
+              variant="subtle"
+              theme="gray"
+              size="sm"
+              @click="onExportRecipientsCsv"
+            />
+            <Button
+              v-if="recipients.hasNextPage"
+              :label="__('Load more')"
+              variant="subtle"
+              size="sm"
+              :loading="recipients.loading"
+              @click="recipients.next()"
+            />
+          </div>
         </div>
         <div
           v-if="recipients.loading && !recipients.data?.length"
@@ -268,6 +282,97 @@
           </div>
           <div class="mt-2 text-xs text-ink-gray-5">
             {{ __('Bars are scaled relative to the recipients total.') }}
+          </div>
+        </div>
+
+        <!-- Module 8 — Per-step engagement breakdown.
+             One row per sequence step, with stats pulled from
+             /campaigns/{cid}/emails/{step_id}/statistics. Loading shows
+             a single inline line so the funnel above stays readable;
+             empty state when the campaign has no steps OR every fetch
+             failed (we still render rows in that case but with em-dashes). -->
+        <div>
+          <div class="mb-2 text-sm font-medium text-ink-gray-9">
+            {{ __('Per-step breakdown') }}
+          </div>
+          <div
+            v-if="perStepStats.loading && !perStepStats.data"
+            class="text-sm text-ink-gray-5"
+          >
+            {{ __('Loading per-step stats…') }}
+          </div>
+          <div
+            v-else-if="!perStepStats.data?.length"
+            class="text-sm text-ink-gray-5"
+          >
+            {{ __('No step stats available.') }}
+          </div>
+          <div v-else class="overflow-auto">
+            <table class="w-full text-sm">
+              <thead
+                class="border-b text-ink-gray-7"
+              >
+                <tr>
+                  <th class="text-left px-3 py-2 font-medium">
+                    {{ __('Step') }}
+                  </th>
+                  <th class="text-left px-3 py-2 font-medium">
+                    {{ __('Subject') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Send after') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Sent') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Unique opens') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Unique clicks') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Replied') }}
+                  </th>
+                  <th class="text-right px-3 py-2 font-medium">
+                    {{ __('Bounced') }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in perStepStats.data"
+                  :key="row.step_id || row.position"
+                  class="border-b hover:bg-surface-menu-bar"
+                >
+                  <td class="px-3 py-2 text-ink-gray-9 tabular-nums">
+                    {{ (row.position || 0) + 1 }}
+                  </td>
+                  <td class="px-3 py-2 text-ink-gray-9 truncate max-w-[24rem]">
+                    {{ row.subject || '—' }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-7 tabular-nums">
+                    {{ row.send_after_days ?? 0 }}
+                    {{ __('d') }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-9 tabular-nums">
+                    {{ row.emails_sent ?? '—' }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-9 tabular-nums">
+                    {{ row.unique_opened ?? '—' }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-9 tabular-nums">
+                    {{ row.unique_clicks ?? '—' }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-9 tabular-nums">
+                    {{ row.total_replied ?? '—' }}
+                  </td>
+                  <td class="px-3 py-2 text-right text-ink-gray-9 tabular-nums">
+                    {{ row.emails_bounced ?? '—' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -422,6 +527,30 @@ const recipientsCount = createResource({
   auto: true,
 })
 const recipientsTotal = computed(() => recipientsCount.data ?? null)
+
+// ----- Module 8 — Reporting polish ----------------------------------------
+//
+// Per-step engagement breakdown (Engagement tab) + CSV export for the
+// Recipients tab. Kept in one block so it's obvious which additions are
+// Module 8.
+const perStepStats = createResource({
+  url: 'firmadapt_crm.integrations.autoklose.reporting.get_per_step_stats',
+  params: { campaign_id: props.campaignId },
+  auto: true,
+})
+
+function onExportRecipientsCsv() {
+  // The backend method sets frappe.response.type = "download" so the
+  // browser fires a file save when we navigate to the method URL. A
+  // simple window.open() in the same tab triggers the download without
+  // leaving an empty tab open — Chrome treats it as a navigation that
+  // resolves to an attachment.
+  const url =
+    '/api/method/firmadapt_crm.integrations.autoklose.reporting.export_recipients_csv' +
+    '?campaign_id=' +
+    encodeURIComponent(props.campaignId)
+  window.location.href = url
+}
 
 // ----- Tabs ----------------------------------------------------------------
 const tabs = [
