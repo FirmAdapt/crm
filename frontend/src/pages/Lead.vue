@@ -34,17 +34,15 @@
           </Button>
         </template>
       </Dropdown>
-      <!-- Module Twilio (click-to-call, Phase 1) — start
-           Renders a "Call" button to the LEFT of "Convert to Deal".
-           Self-gates on Autoklose User role + Twilio Settings enabled.
-           Triggers Activities reload so the Calls tab picks up the
-           freshly-inserted CRM Call Log row immediately. -->
+      <!-- v0.12.0 — Twilio click-to-call + Vayne LinkedIn enrichment.
+           Both buttons self-gate on Autoklose User role + their own
+           Settings.enabled flag. Order: Call → Enrich → Convert. -->
       <CallButton
         v-if="doc.name"
         :lead-doc="doc"
         @initiated="reloadResources"
       />
-      <!-- Module Twilio — end -->
+      <EnrichButton :lead-doc="doc" @enriched="reloadResources" />
       <Button
         :label="__('Convert to Deal')"
         variant="solid"
@@ -287,8 +285,9 @@ import LeadConflictBanner from '@/components/LeadConflictBanner.vue'
 // FirmAdapt Module 1 (Phase A.2 / Item 5) — side-panel widget that
 // lists Autoklose Campaigns whose recipients link to this Lead.
 import LeadAutoklosePanel from '@/components/LeadAutoklosePanel.vue'
-// FirmAdapt Module Twilio (Phase 1) — header "Call" button.
+// v0.12.0 — header buttons: Twilio Call + Vayne LinkedIn enrichment.
 import CallButton from '@/components/CallButton.vue'
+import EnrichButton from '@/components/EnrichButton.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {
   openWebsite,
