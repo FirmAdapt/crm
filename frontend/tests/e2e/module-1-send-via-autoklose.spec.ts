@@ -1,0 +1,199 @@
+import { test, expect } from '@playwright/test';
+import { recordApiCalls } from './helpers/network';
+
+// Module 1 (Phase A.2 / Item 6.C.B) — "Send via Autoklose" composer
+// button on the Lead detail page.
+//
+// The button is mounted by `CommunicationArea.vue` via EmailEditor's
+// `#extra-actions` slot and only renders when:
+//   - doctype === 'CRM Lead'
+//   - is_autoklose_user is true for the current user (admin bypass OK)
+//   - the Lead has an email
+//   - at least one Autoklose email account is connected
+//
+// Sandbox lead: Bob Martinez (CRM-LEAD-2026-00002, bob.martinez@example.com).
+// He was the canonical Module 1 manual-QA target.
+//
+// CAVEAT: Case 3 + Case 4 hit the real Autoklose `/api/send` endpoint and
+// create one single-send campaign per run on the Autoklose side. Don't
+// run this spec in a loop.
+
+const LEAD_NAME = 'CRM-LEAD-2026-00002';
+const LEAD_URL = `/crm/leads/${LEAD_NAME}`;
+const SEND_METHOD =
+  'firmadapt_crm.integrations.autoklose.api.send_single_email';
+
+// The frappe-ui HelpModal floats fixed/z-50 on the right side of the
+// viewport on a fresh session and intercepts clicks. Dismiss it before
+// driving the composer (same pattern as module-6-bulk-* specs).
+async function dismissHelpModal(page: import('@playwright/test').Page) {
+  const helpModal = page.locator('div.fixed.z-50.right-0.w-80.shadow-2xl');
+  if (await helpModal.isVisible().catch(() => false)) {
+    const closeBtn = helpModal.locator('button:has(svg.feather-x)').first();
+    await closeBtn.click().catch(() => {});
+  }
+}
+
+// Open the email composer by clicking the Reply button in the
+// CommunicationArea. The button reads "Reply" and toggles `showEmailBox`.
+async function openComposer(page: import('@playwright/test').Page) {
+  const replyBtn = page.getByRole('button', { name: 'Reply', exact: true });
+  await expect(replyBtn).toBeVisible({ timeout: 15_000 });
+  await replyBtn.click();
+  // The composer renders the standard Send button inside the toolbar —
+  // wait for it as the proof the EmailEditor is mounted + visible.
+  await expect(
+    page.getByRole('button', { name: 'Send', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
+}
+
+// Fill subject/body in the composer. The subject is a bare <input>
+// inside the editor toolbar; the body is the TipTap contentEditable
+// region (ProseMirror) below.
+async function fillComposer(
+  page: import('@playwright/test').Page,
+  subject: string,
+  bodyText: string,
+) {
+  // Subject input — the textbox with placeholder is the only bare
+  // <input> the EmailEditor renders next to the "SUBJECT:" label.
+  const subjectInput = page
+    .locator('input.flex-1.border-none.text-ink-gray-9')
+    .first();
+  await expect(subjectInput).toBeVisible({ timeout: 5_000 });
+  await subjectInput.fill(subject);
+
+  // Body — TipTap renders a `[contenteditable="true"]` div. There are
+  // a few contenteditable elements on the page (toEmails etc.) but
+  // ProseMirror tags itself with `.ProseMirror`.
+  const editor = page.locator('div.ProseMirror[contenteditable="true"]').first();
+  await expect(editor).toBeVisible({ timeout: 5_000 });
+  await editor.click();
+  await editor.fill(bodyText);
+}
+
+test.describe('Module 1 — Send via Autoklose composer button', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(LEAD_URL);
+    await page.waitForLoadState('networkidle');
+    await dismissHelpModal(page);
+  });
+
+  test('Case 1: button is visible when composer is open on a Lead with email', async ({
+    page,
+  }) => {
+    await openComposer(page);
+
+    // The button label includes "Send via Autoklose" (sometimes
+    // suffixed with " · <account name>" when 2+ accounts exist; the
+    // dev sandbox has 1 so the bare label matches).
+    const akButton = page.getByRole('button', { name: /Send via Autoklose/ });
+    await expect(akButton).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('Case 2: disabled when subject + body empty, tooltip explains why', async ({
+    page,
+  }) => {
+    await openComposer(page);
+
+    // The EmailEditor seeds `subject` from the parent (the Lead's
+    // computed subject — "Re: <opener>" or fallback "Email From Lead").
+    // To exercise the empty-state branch in AutokloseSendButton's
+    // `tooltip` computed, clear the subject first.
+    const subjectInput = page
+      .locator('input.flex-1.border-none.text-ink-gray-9')
+      .first();
+    await expect(subjectInput).toBeVisible({ timeout: 5_000 });
+    await subjectInput.fill('');
+
+    const akButton = page.getByRole('button', { name: /Send via Autoklose/ });
+    await expect(akButton).toBeVisible({ timeout: 10_000 });
+    await expect(akButton).toBeDisabled();
+
+    // Tooltip — a disabled HTML <button> swallows pointer events, so the
+    // <Tooltip> wraps it explicitly (per the component's comment block).
+    // reka-ui's TooltipTrigger uses `as-child`, mounting handlers on the
+    // button itself. With `force: true` we bypass actionability checks
+    // (Playwright would otherwise refuse to hover the disabled element).
+    await akButton.hover({ force: true });
+
+    // Default empty state surfaces the "Subject is required." copy
+    // from AutokloseSendButton.vue's `tooltip` computed. reka-ui
+    // renders the text twice (visible div + aria-only span), so we
+    // match the first occurrence.
+    await expect(
+      page.getByText('Subject is required.').first(),
+    ).toBeVisible({ timeout: 3_000 });
+  });
+
+  test('Case 3: successful send fires POST, shows toast, sends correct payload', async ({
+    page,
+  }) => {
+    await openComposer(page);
+
+    const subject = 'Module 1 E2E send-via-autoklose test';
+    const body = 'This is an automated E2E test. Please ignore.';
+    await fillComposer(page, subject, body);
+
+    const akButton = page.getByRole('button', { name: /Send via Autoklose/ });
+    await expect(akButton).toBeEnabled({ timeout: 5_000 });
+
+    const requests = recordApiCalls(page, SEND_METHOD);
+    await akButton.click();
+
+    // Success toast — see AutokloseSendButton.vue:175.
+    await expect(
+      page.getByText('Email sent via Autoklose.', { exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    // Payload assertions.
+    expect(requests.length).toBeGreaterThanOrEqual(1);
+    const payload = requests[0].postDataJSON();
+    expect(payload.lead_name).toBe(LEAD_NAME);
+    expect(typeof payload.subject).toBe('string');
+    expect(payload.subject.length).toBeGreaterThan(0);
+    expect(typeof payload.body).toBe('string');
+    expect(payload.body.length).toBeGreaterThan(0);
+  });
+
+  test('Case 4: Jinja-templated subject + body are piped through to the server', async ({
+    page,
+  }) => {
+    await openComposer(page);
+
+    const subject = 'Hello {{first_name}}';
+    // The body input is plain text typed into the TipTap editor — the
+    // editor wraps it in <p>...</p> before emit. We supply text only;
+    // the SPA pipeline owns the HTML wrapping. Server render is
+    // covered by `tests/test_module_1_api.py` on the backend.
+    const bodyText = 'Hi {{first_name}}, Test.';
+    await fillComposer(page, subject, bodyText);
+
+    const akButton = page.getByRole('button', { name: /Send via Autoklose/ });
+    await expect(akButton).toBeEnabled({ timeout: 5_000 });
+
+    const requests = recordApiCalls(page, SEND_METHOD);
+    await akButton.click();
+
+    await expect(
+      page.getByText('Email sent via Autoklose.', { exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    expect(requests.length).toBeGreaterThanOrEqual(1);
+    const payload = requests[0].postDataJSON();
+    expect(payload.lead_name).toBe(LEAD_NAME);
+    // SPA ships the raw template — backend handles Jinja expansion.
+    expect(payload.subject).toContain('{{first_name}}');
+    expect(payload.body).toContain('{{first_name}}');
+  });
+
+  // Case 5: cleanup — close the composer so the lead is left tidy. The
+  // afterEach runs after every test; it's idempotent (the Discard
+  // button only renders while the composer is open).
+  test.afterEach(async ({ page }) => {
+    const discardBtn = page.getByRole('button', { name: 'Discard', exact: true });
+    if (await discardBtn.isVisible().catch(() => false)) {
+      await discardBtn.click().catch(() => {});
+    }
+  });
+});
