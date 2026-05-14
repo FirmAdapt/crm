@@ -104,10 +104,30 @@
       </div>
 
       <!-- =================== SEQUENCE =================== -->
+      <!-- Module 3 — Editable sequence. Admins see Add / Edit / Delete
+           controls; non-admins fall back to the read-only Module 1
+           view. -->
       <div
         v-else-if="tab.name === 'sequence'"
         class="overflow-auto px-5 py-4 space-y-4"
       >
+        <!-- Header row: step count + Add (admin-only). Always rendered
+             so the count is visible even when there are zero steps. -->
+        <div class="flex items-center justify-between">
+          <div class="text-sm text-ink-gray-5">
+            {{ doc.sequence_steps?.length || 0 }}
+            {{ __('step(s)') }}
+          </div>
+          <Button
+            v-if="autokloseAdminFlag"
+            variant="solid"
+            theme="blue"
+            icon-left="plus"
+            :label="__('Add step')"
+            @click="openCreateStep()"
+          />
+        </div>
+
         <div
           v-if="!doc.sequence_steps?.length"
           class="text-sm text-ink-gray-5"
@@ -119,13 +139,37 @@
           :key="step.name"
           class="rounded border border-outline-gray-1 p-4"
         >
-          <div class="flex items-baseline gap-3">
-            <span class="text-base font-medium text-ink-gray-9">
-              {{ (step.position || 0) + 1 }}. {{ step.step_name || __('Email') }}
-            </span>
-            <span class="text-sm text-ink-gray-5">
-              {{ __('Send after') }} {{ step.send_after_days }} {{ __('day(s)') }}
-            </span>
+          <div class="flex items-baseline justify-between gap-3">
+            <div class="flex items-baseline gap-3">
+              <span class="text-base font-medium text-ink-gray-9">
+                {{ (step.position || 0) + 1 }}.
+                {{ step.step_name || __('Email') }}
+              </span>
+              <span class="text-sm text-ink-gray-5">
+                {{ __('Send after') }} {{ step.send_after_days }}
+                {{ __('day(s)') }}
+              </span>
+            </div>
+            <!-- Per-step admin actions. Edit opens the StepEditorModal
+                 pre-seeded with this step; Delete pops a confirm
+                 dialog with explicit Cancel + red destructive CTA. -->
+            <div v-if="autokloseAdminFlag" class="flex shrink-0 gap-2">
+              <Button
+                variant="subtle"
+                size="sm"
+                icon-left="edit-2"
+                :label="__('Edit')"
+                @click="openEditStep(step)"
+              />
+              <Button
+                variant="subtle"
+                theme="red"
+                size="sm"
+                icon-left="trash-2"
+                :label="__('Delete')"
+                @click="openDeleteStep(step)"
+              />
+            </div>
           </div>
           <div v-if="step.subject" class="mt-2 text-sm">
             <span class="text-ink-gray-5">{{ __('Subject') }}:</span>
@@ -325,11 +369,63 @@
       </p>
     </template>
   </Dialog>
+
+  <!-- Module 3 — Sequence step editor (create + edit). Mounted only
+       when open so the inner form's `reactive` state resets cleanly
+       on each open. The same modal handles both modes; `editingStep`
+       being null toggles into create mode internally. -->
+  <StepEditorModal
+    v-if="stepEditorOpen"
+    v-model="stepEditorOpen"
+    :step="editingStep"
+    :campaign-id="props.campaignId"
+    @saved="onStepSaved"
+  />
+
+  <!-- Module 3 — Delete-step confirm dialog. Red destructive CTA +
+       explicit Cancel; closes on success or when the user dismisses. -->
+  <Dialog
+    v-model="deleteStepConfirmOpen"
+    :options="{
+      title: __('Delete this sequence step?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Delete step'),
+          variant: 'solid',
+          theme: 'red',
+          loading: deletingStep,
+          onClick: runDeleteStep,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            'Autoklose will remove this email from the campaign sequence. ' +
+              'Recipients who have not yet reached this step will skip it; ' +
+              'recipients already past it are unaffected.',
+          )
+        }}
+      </p>
+      <p v-if="pendingDeleteStep" class="mt-3 text-sm text-ink-gray-9">
+        <span class="text-ink-gray-5">{{ __('Step') }}:</span>
+        <span class="ml-1 font-medium">
+          {{ (pendingDeleteStep.position || 0) + 1 }}.
+          {{ pendingDeleteStep.subject || pendingDeleteStep.step_name || __('Email') }}
+        </span>
+      </p>
+    </template>
+  </Dialog>
 </template>
 
 <script setup>
 import IndicatorIcon from '@/components/Icons/IndicatorIcon.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
+import StepEditorModal from '@/components/Modals/StepEditorModal.vue'
 import {
   Badge,
   Breadcrumbs,
@@ -610,6 +706,75 @@ async function runPendingCadence() {
     })
   } finally {
     cadenceBusy.value = false
+  }
+}
+
+// ----- Module 3: Sequence step authoring (Add / Edit / Delete) -------------
+//
+// Add / Edit share one modal (StepEditorModal). editingStep === null is the
+// CREATE signal; otherwise the step row is passed in to pre-seed the form.
+// onStepSaved triggers a reload — the backend already called
+// refresh_campaign_detail so the local cache is fresh; campaign.reload()
+// just pulls the latest values into the SPA's doc resource.
+//
+// Delete uses a separate confirm Dialog rather than $dialog so we get
+// the same `loading` UX during the API call that the cadence dialog has.
+const stepEditorOpen = ref(false)
+const editingStep = ref(null)
+
+function openCreateStep() {
+  editingStep.value = null
+  stepEditorOpen.value = true
+}
+function openEditStep(step) {
+  editingStep.value = step
+  stepEditorOpen.value = true
+}
+function onStepSaved() {
+  stepEditorOpen.value = false
+  editingStep.value = null
+  campaign.reload()
+}
+
+const deleteStepConfirmOpen = ref(false)
+const pendingDeleteStep = ref(null)
+const deletingStep = ref(false)
+
+function openDeleteStep(step) {
+  pendingDeleteStep.value = step
+  deleteStepConfirmOpen.value = true
+}
+
+async function runDeleteStep() {
+  const step = pendingDeleteStep.value
+  if (!step?.step_id) return
+  deletingStep.value = true
+  try {
+    await call(
+      'firmadapt_crm.integrations.autoklose.step_authoring.delete_step',
+      {
+        campaign_id: props.campaignId,
+        step_id: step.step_id,
+      },
+    )
+    campaign.reload()
+    toast.create({
+      message: __('Sequence step deleted.'),
+      type: 'success',
+    })
+    deleteStepConfirmOpen.value = false
+    pendingDeleteStep.value = null
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        e?._server_messages ||
+        __('Delete failed.'),
+      type: 'error',
+    })
+  } finally {
+    deletingStep.value = false
   }
 }
 
