@@ -79,16 +79,18 @@ const cards = [
     links: [{ label: 'Settings', href: '/app/twilio-settings' }],
   },
   {
-    slug: 'vayne',
-    name: 'Vayne',
-    tagline: 'LinkedIn Sales Navigator scraping',
+    slug: 'linkedin-questor',
+    name: 'LinkedIn Questor',
+    tagline: 'LinkedIn profile + company enrichment (RapidAPI)',
     description:
-      'Per-Lead enrichment from a LinkedIn profile URL (sync, ' +
-      '8 or 16 credits) and bulk-async batch scraping with ' +
-      'webhook delivery. Fills only empty Lead fields — never ' +
-      "overwrites a rep's edits.",
+      'Per-Lead enrichment from a LinkedIn profile URL. Returns profile data, ' +
+      'company info, Open-to-Work / Open-Profile flags, and recent activity ' +
+      'recency. Existing-wins mapping — never overwrites rep edits. ' +
+      'Credit costs documented per call in Settings.',
     color: 'blue',
-    links: [{ label: 'Settings', href: '/app/vayne-settings' }],
+    links: [
+      { label: 'Settings', href: '/app/linkedin-questor-settings' },
+    ],
   },
   {
     slug: 'betterenrich',

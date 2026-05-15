@@ -263,7 +263,7 @@ const autokloseUserCheck = createResource({
 // FirmAdapt v0.13.2 — admin gate for the Integrations nav entry. The
 // Integrations page is purely a navigation hub linking out to the
 // Settings / User Limit / Usage Log doctypes for Autoklose, Twilio,
-// Vayne, BetterEnrich. Non-admins (regular Autoklose Users) don't
+// LinkedIn Questor, BetterEnrich. Non-admins (regular Autoklose Users) don't
 // need to see it — they interact with integrations via per-Lead
 // buttons + bulk actions.
 const autokloseAdminFlag = ref(false)

@@ -37,12 +37,22 @@
     :selections="pushSelections"
     @done="onPushToAutokloseDone"
   />
+  <!-- Module LinkedIn Questor: bulk LinkedIn enrichment modal. Same
+       reason for top-level mount as PushToAutokloseModal — keeps the
+       toggle state stable across re-opens within a single list page. -->
+  <BulkLinkedInQuestorModal
+    v-if="showLinkedInQuestorModal"
+    v-model="showLinkedInQuestorModal"
+    :selections="questorSelections"
+    @done="onLinkedInQuestorDone"
+  />
 </template>
 
 <script setup>
 import EditValueModal from '@/components/Modals/EditValueModal.vue'
 import AssignmentModal from '@/components/Modals/AssignmentModal.vue'
 import PushToAutokloseModal from '@/components/Modals/PushToAutokloseModal.vue'
+import BulkLinkedInQuestorModal from '@/components/Modals/BulkLinkedInQuestorModal.vue'
 import { setupListCustomizations } from '@/utils'
 import { globalStore } from '@/stores/global'
 import { useTelemetry } from 'frappe-ui/frappe'
@@ -262,96 +272,69 @@ function pushToAutoklose(selections, unselectAll) {
   showPushToAutokloseModal.value = true
 }
 
-// ---- Module Vayne (bulk LinkedIn enrichment) ------------------------------
+// ---- Module LinkedIn Questor (bulk LinkedIn enrichment) -------------------
 //
-// Async via /api/linkedin_scrapings/batch. Confirm dialog quotes the
-// worst-case credit cost (N × 16) so admins don't burn through the
-// monthly budget by accident. The actual cost can be lower if some
-// leads have no LinkedIn URL — those are skipped server-side without
-// burning credits. The webhook handler ingests results and writes
-// audit rows per Lead 1–5 minutes later; we don't block on it here.
-function enrichFromLinkedin(selections, unselectAll) {
-  const ids = Array.from(selections)
-  if (!ids.length) return
-  // Worst-case estimate: 16 credits per profile (with company details).
-  // Vayne returns the true `credits_used` in the batch response, which
-  // we surface in the post-call toast.
-  const worstCaseCredits = ids.length * 16
-  $dialog({
-    title: __('Enrich {0} lead(s) from LinkedIn?', [ids.length]),
-    message: __(
-      'Vayne will fetch the LinkedIn profile for each selected Lead and ' +
-        'fill empty CRM fields (existing values are never overwritten). ' +
-        'Leads without a LinkedIn URL will be skipped. ' +
-        'Estimated cost: up to {0} × 16 = {1} credits. Results land in ' +
-        '1–5 minutes via webhook.',
-      [ids.length, worstCaseCredits],
-    ),
-    variant: 'solid',
-    theme: 'blue',
-    actions: [
-      {
-        label: __('Submit batch'),
-        variant: 'solid',
-        theme: 'blue',
-        onClick: (close) => {
-          capture('vayne_bulk_enrich')
-          call(
-            'firmadapt_crm.integrations.vayne.api.bulk_enrich_leads',
-            { lead_names: ids },
-          )
-            .then((resp) => {
-              renderBulkEnrichResult(resp)
-              list.value?.reload()
-              unselectAll()
-              close()
-            })
-            .catch((e) => {
-              toast.create({
-                message:
-                  e?.messages?.join(', ') ||
-                  e?.message ||
-                  __('Bulk enrich failed.'),
-                type: 'error',
-              })
-            })
-        },
-      },
-      { label: __('Cancel') },
-    ],
-  })
+// Replaces the v0.12.0 Vayne bulk surface. Sync (per-Lead RapidAPI
+// calls run in a worker batch; the response carries ok / failed
+// per-Lead lists). The picker UX lives in BulkLinkedInQuestorModal —
+// dialog title + count + worst-case credit cost + two override
+// toggles (signals / company). We just open the modal and render the
+// result toast on `@done`.
+
+const showLinkedInQuestorModal = ref(false)
+const questorSelections = ref(null)
+const questorUnselectAll = ref(() => {})
+
+function linkedinQuestorEnrich(selections, unselectAll) {
+  questorSelections.value = selections
+  questorUnselectAll.value = unselectAll
+  showLinkedInQuestorModal.value = true
 }
 
-function renderBulkEnrichResult(resp) {
-  const queued = resp?.leads_with_url?.length ?? 0
-  const skipped = resp?.leads_without_url ?? []
-  const creditsUsed = resp?.credits_used ?? 0
-  if (skipped.length === 0) {
+function onLinkedInQuestorDone(resp) {
+  // Backend shape: {ok: [{lead, fields_updated_count}], failed:
+  // [{lead, reason}], total, credits_remaining?}. Mirror the
+  // PushToAutokloseModal toast pattern — single summary + per-lead
+  // detail on console for grep-ability.
+  capture('linkedin_questor_bulk_enrich')
+  const ok = resp?.ok ?? []
+  const failed = resp?.failed ?? []
+  const credits = resp?.credits_remaining
+  const totalUpdated = ok.reduce(
+    (sum, row) => sum + (row.fields_updated_count ?? 0),
+    0,
+  )
+  const creditsSuffix =
+    typeof credits === 'number' ? __(' {0} credits left.', [credits]) : ''
+  if (failed.length === 0) {
     toast.create({
-      message: __(
-        'Batch submitted — {0} profile(s) queued for enrichment. ' +
-          '{1} credit(s) reserved. Results in 1–5 minutes.',
-        [queued, creditsUsed],
-      ),
+      message:
+        __(
+          'Enriched {0} lead(s) — {1} field(s) updated total.',
+          [ok.length, totalUpdated],
+        ) + creditsSuffix,
       type: 'success',
     })
-    return
+  } else {
+    const failedSummary = failed
+      .slice(0, 3)
+      .map((f) => `${f.lead}: ${f.reason}`)
+      .join(' · ')
+    const more = failed.length > 3 ? ` (+${failed.length - 3} more)` : ''
+    toast.create({
+      message:
+        __(
+          'Enriched {0} ok, {1} skipped. {2}{3}',
+          [ok.length, failed.length, failedSummary, more],
+        ) + creditsSuffix,
+      type: ok.length > 0 ? 'warning' : 'error',
+    })
+    // eslint-disable-next-line no-console
+    console.warn('[linkedin_questor.bulk_enrich_leads] failed entries:', failed)
   }
-  const failedSummary = skipped
-    .slice(0, 3)
-    .map((f) => `${f.lead}: ${f.reason}`)
-    .join(' · ')
-  const more = skipped.length > 3 ? ` (+${skipped.length - 3} more)` : ''
-  toast.create({
-    message: __(
-      'Batch submitted — {0} queued, {1} skipped. {2} credit(s) reserved. ' +
-        '{3}{4}',
-      [queued, skipped.length, creditsUsed, failedSummary, more],
-    ),
-    type: queued > 0 ? 'warning' : 'error',
-  })
-  // eslint-disable-next-line no-console
-  console.warn('[bulk_enrich_leads] skipped entries:', skipped)
+  list.value?.reload()
+  questorUnselectAll.value?.()
+  showLinkedInQuestorModal.value = false
 }
 
 // ---- Module BetterEnrich (bulk work-email find) ---------------------------
@@ -514,13 +497,13 @@ function bulkActions(selections, unselectAll) {
       label: __('Push to Autoklose'),
       onClick: () => pushToAutoklose(selections, unselectAll),
     })
-    // Module Vayne: bulk-enrich selected leads from LinkedIn via Vayne.
+    // Module LinkedIn Questor: bulk-enrich selected leads from LinkedIn.
     // Same role + per-lead ownership gate as Push to Autoklose, enforced
     // server-side; same UX surface so admins find both actions next to
-    // each other in the bulk dropdown.
+    // each other in the bulk dropdown. Replaces the v0.12.0 Vayne slot.
     actions.push({
       label: __('Enrich from LinkedIn'),
-      onClick: () => enrichFromLinkedin(selections, unselectAll),
+      onClick: () => linkedinQuestorEnrich(selections, unselectAll),
     })
     // Module BetterEnrich: bulk work-email lookup. Distinct from Vayne
     // (which scrapes a LinkedIn profile in full); BetterEnrich just
