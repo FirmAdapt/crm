@@ -1,42 +1,26 @@
 <template>
   <!--
-    FirmAdapt Module LinkedIn Questor — per-Lead enrichment button.
+    LinkedIn Questor — per-Lead enrichment button.
 
-    Replaces the previous Vayne enrichment surface. LinkedIn Questor is
-    a RapidAPI-backed enrichment service: it fetches a LinkedIn profile
-    (skills, certifications, recent activity, open-to-work / open-
-    profile flags) plus the linked company record and writes the result
-    back to the Lead with existing-wins mapping (rep edits are never
-    overwritten).
+    v0.15.0 UX hardening (fixes audit P1 #3, #6):
+      - The per-call override panel now shows EACH option's resolved state
+        as a right-aligned chip: "default: on" (gray) when the user hasn't
+        overridden, "OVERRIDE: on" (blue) / "OVERRIDE: off" (red) when
+        they have. Before this release, the user had no way to know what
+        the Settings default was, or whether their click toggled the
+        default away.
+      - The override panel now stays open on item click (Popover instead
+        of Dropdown). Setting two flags used to require opening the menu
+        twice.
 
-    UX surface — single primary action with a Dropdown chevron for
-    advanced overrides:
-      - Primary "Enrich from LinkedIn" button calls
-        `enrich_lead(lead_name)` with no flags — server uses the
-        Settings defaults for include_skills / include_certifications /
-        include_signals / include_company.
-      - Dropdown chevron exposes three toggles (Include signals /
-        Include certifications / Include company data). Toggling them
-        sends explicit booleans for those three flags on the next call,
-        overriding the Settings default for that one invocation.
-      - include_skills is left at Settings default (cheap, near-always
-        on) to keep the dropdown short.
+    Other invariants (unchanged):
+      - Hidden entirely unless caller has the Autoklose User role.
+      - Hidden if LinkedIn Questor isn't configured / enabled (we read
+        `get_integration_status` instead of relying on a credits probe).
+      - Disabled (with tooltip) when the Lead has no LinkedIn URL.
+      - "Reset to defaults" footer appears only when ≥1 override is set.
 
-    Visibility:
-      - Hidden entirely unless the user has the `Autoklose User` role
-        (re-uses the existing role — no new perm).
-      - Hidden if `get_my_credits()` fails / errors at construction
-        (treated as "LinkedIn Questor not configured / disabled").
-
-    Disabled state:
-      - Lead missing custom_linkedin_url → tooltip "Set a LinkedIn URL
-        on this lead first." We wrap the disabled Button in a Tooltip
-        because a native disabled <button> swallows pointer events and
-        the Button's own :tooltip prop never fires.
-
-    On success: green toast with fields_updated / fields_skipped /
-    credits_remaining. Emits @enriched so the parent Lead.vue reloads
-    the doc and renders the new field values in the side panel.
+    On success: green toast + emit @enriched so the parent reloads.
   -->
   <template v-if="autokloseUserFlag && questorEnabled">
     <Tooltip
@@ -60,18 +44,65 @@
         :loading="enriching"
         @click="onEnrich"
       />
-      <!-- Chevron sits flush with the main button to read as one
-           split-button surface even though frappe-ui has no ButtonGroup
-           primitive. The Dropdown's slot is what gets clicked; the
-           options array is the override toggles. -->
-      <Dropdown :options="advancedOptions" placement="right">
-        <Button
-          icon="chevron-down"
-          variant="subtle"
-          theme="blue"
-          :disabled="enriching"
-        />
-      </Dropdown>
+      <!-- Popover-based "split button" trigger. Using Popover rather than
+           the frappe-ui Dropdown's `:options` array because the options
+           pattern auto-closes on every item click — and we want admins
+           to be able to toggle multiple overrides without re-opening
+           the menu. The active-override count shows as a small badge
+           on the trigger so the surface signals "you have overrides
+           configured" even when the menu is closed. -->
+      <Popover transition="default" placement="bottom-end">
+        <template #target="{ togglePopover }">
+          <Button
+            icon="chevron-down"
+            variant="subtle"
+            theme="blue"
+            :disabled="enriching"
+            @click.stop="togglePopover"
+          >
+            <template v-if="overrideCount > 0" #suffix>
+              <span
+                class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-surface-blue-2 px-1 text-xs font-medium text-ink-blue-9"
+              >
+                {{ overrideCount }}
+              </span>
+            </template>
+          </Button>
+        </template>
+        <template #body>
+          <div
+            class="mt-1 w-72 rounded-lg bg-surface-modal shadow-2xl ring-1 ring-black ring-opacity-5"
+          >
+            <div class="px-3 pb-1 pt-3 text-xs text-ink-gray-5">
+              {{ __('Override Settings defaults for this call only.') }}
+            </div>
+            <button
+              v-for="opt in advancedOptions"
+              :key="opt.key"
+              type="button"
+              class="flex w-full items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-surface-menu-bar"
+              @click.stop="cycle(opt.key)"
+            >
+              <span class="text-ink-gray-9">{{ opt.label }}</span>
+              <span :class="opt.chipClass">
+                {{ opt.chipText }}
+              </span>
+            </button>
+            <div
+              v-if="overrideCount > 0"
+              class="border-t px-3 py-2"
+            >
+              <button
+                type="button"
+                class="text-xs text-ink-gray-7 hover:text-ink-gray-9 underline"
+                @click.stop="resetOverrides"
+              >
+                {{ __('Reset to defaults') }}
+              </button>
+            </div>
+          </div>
+        </template>
+      </Popover>
     </div>
   </template>
 </template>
@@ -80,7 +111,7 @@
 import { ref, computed } from 'vue'
 import {
   Button,
-  Dropdown,
+  Popover,
   Tooltip,
   createResource,
   call,
@@ -88,12 +119,8 @@ import {
 } from 'frappe-ui'
 
 const props = defineProps({
-  // The whole leadDoc — we read `name` + `custom_linkedin_url` off it.
-  // Passing the doc rather than just the id lets us reactively hide /
-  // show based on URL presence without an extra round-trip.
   leadDoc: { type: Object, required: true },
 })
-
 const emit = defineEmits(['enriched'])
 
 const enriching = ref(false)
@@ -103,13 +130,9 @@ const linkedinUrl = computed(
 )
 
 // ─── Role + integration gate ─────────────────────────────────────────
-// Same pattern as EnrichButton / BetterEnrichButton: cheap createResource
-// at mount, hides the button cleanly for users without the Autoklose
-// role. The integration-enabled flag is derived from whether
-// `get_my_credits()` resolves — if LinkedIn Questor isn't configured
-// on the site (or admin has flipped enabled=0), the call errors and we
-// hide the surface.
-
+// `get_integration_status` returns enabled/configured/role_ok plus the
+// Settings defaults for each include_* flag. One fetch on mount drives
+// both the visibility gate AND the override-chip rendering below.
 const autokloseUserFlag = ref(false)
 createResource({
   url: 'firmadapt_crm.permissions.is_autoklose_user',
@@ -118,36 +141,47 @@ createResource({
   onError: () => (autokloseUserFlag.value = false),
 })
 
-const questorEnabled = ref(false)
-const creditsRemaining = ref(null)
-
+const status = ref({
+  enabled: false,
+  configured: false,
+  role_ok: false,
+  credits_remaining: null,
+  defaults: {
+    include_skills: false,
+    include_certifications: false,
+    include_signals: false,
+    include_company: false,
+  },
+})
 createResource({
-  url: 'firmadapt_crm.integrations.linkedin_questor.api.get_my_credits',
+  url: 'firmadapt_crm.integrations.linkedin_questor.api.get_integration_status',
   auto: true,
   onSuccess: (v) => {
-    // Backend returns an int credit count from the cached Settings
-    // field. Any successful resolution means the integration is
-    // configured AND enabled — that's the bar for showing the button.
-    creditsRemaining.value = typeof v === 'number' ? v : Number(v) || 0
-    questorEnabled.value = true
+    status.value = { ...status.value, ...v }
   },
   onError: () => {
-    creditsRemaining.value = null
-    questorEnabled.value = false
+    status.value.enabled = false
+    status.value.configured = false
   },
 })
 
-// ─── Advanced-option overrides ───────────────────────────────────────
+// Surface the button only when the integration is BOTH enabled AND
+// configured (api_key set). A partial state is the admin's problem,
+// not the rep's — hide the button until they sort it.
+const questorEnabled = computed(
+  () => status.value.enabled && status.value.configured,
+)
+
+// ─── Per-call overrides ──────────────────────────────────────────────
 //
-// Each toggle starts at `null` ("use Settings default"). Clicking the
-// dropdown entry flips it through three states:
+// Each override starts at `null` ("use Settings default"). Clicking the
+// menu item cycles:
 //   null  → true    ("force on")
 //   true  → false   ("force off")
 //   false → null    ("default")
 //
-// The send-time payload omits the key when null, so the backend sees
-// "no override" and falls back to LinkedIn Questor Settings.
-
+// The send-time payload omits keys still at null so the backend falls
+// back to LinkedIn Questor Settings.
 const overrides = ref({
   include_signals: null,
   include_certifications: null,
@@ -161,35 +195,76 @@ function cycle(key) {
   else overrides.value[key] = null
 }
 
-function badge(key) {
-  const v = overrides.value[key]
-  if (v === true) return ' (on)'
-  if (v === false) return ' (off)'
-  return ''
+function resetOverrides() {
+  overrides.value.include_signals = null
+  overrides.value.include_certifications = null
+  overrides.value.include_company = null
 }
 
-const advancedOptions = computed(() => [
-  {
-    label: __('Include signals') + badge('include_signals'),
-    onClick: () => cycle('include_signals'),
-  },
-  {
-    label: __('Include certifications') + badge('include_certifications'),
-    onClick: () => cycle('include_certifications'),
-  },
-  {
-    label: __('Include company data') + badge('include_company'),
-    onClick: () => cycle('include_company'),
-  },
-])
+const overrideCount = computed(
+  () => Object.values(overrides.value).filter((v) => v !== null).length,
+)
+
+// Each option renders its label + a right-aligned chip showing the
+// resolved state. Three chip variants:
+//   "default: on/off"  (gray)         — no override; what Settings says
+//   "OVERRIDE: on"     (blue)         — explicit force-on this call
+//   "OVERRIDE: off"    (red)          — explicit force-off this call
+//
+// This is the P1 #3 fix from the v0.14.0 UX audit. Before, the menu
+// items just showed " (on)" / " (off)" suffixes AFTER click — admins
+// had no way to know the default state.
+const advancedOptions = computed(() => {
+  const defaults = status.value.defaults || {}
+  return [
+    {
+      key: 'include_signals',
+      label: __('Include signals'),
+      ...chipFor(overrides.value.include_signals, defaults.include_signals),
+    },
+    {
+      key: 'include_certifications',
+      label: __('Include certifications'),
+      ...chipFor(
+        overrides.value.include_certifications,
+        defaults.include_certifications,
+      ),
+    },
+    {
+      key: 'include_company',
+      label: __('Include company data'),
+      ...chipFor(overrides.value.include_company, defaults.include_company),
+    },
+  ]
+})
+
+function chipFor(override, defaultValue) {
+  if (override === null) {
+    return {
+      chipText: __('default: {0}', [defaultValue ? __('on') : __('off')]),
+      chipClass:
+        'inline-flex items-center rounded-full bg-surface-gray-2 px-2 py-0.5 text-xs text-ink-gray-7',
+    }
+  }
+  if (override === true) {
+    return {
+      chipText: __('OVERRIDE: on'),
+      chipClass:
+        'inline-flex items-center rounded-full bg-surface-blue-2 px-2 py-0.5 text-xs font-medium text-ink-blue-9',
+    }
+  }
+  return {
+    chipText: __('OVERRIDE: off'),
+    chipClass:
+      'inline-flex items-center rounded-full bg-surface-red-2 px-2 py-0.5 text-xs font-medium text-ink-red-9',
+  }
+}
 
 // ─── Action ──────────────────────────────────────────────────────────
 async function onEnrich() {
   if (!props.leadDoc?.name || enriching.value) return
   enriching.value = true
   try {
-    // Build payload — drop null entries so the backend uses the
-    // Settings default for un-overridden flags.
     const args = { lead_name: props.leadDoc.name }
     for (const k of Object.keys(overrides.value)) {
       if (overrides.value[k] !== null) args[k] = overrides.value[k]
@@ -201,7 +276,9 @@ async function onEnrich() {
     const updated = resp?.fields_updated || []
     const skipped = resp?.fields_skipped || []
     const credits = resp?.credits_remaining
-    creditsRemaining.value = typeof credits === 'number' ? credits : creditsRemaining.value
+    if (typeof credits === 'number') {
+      status.value.credits_remaining = credits
+    }
     toast.create({
       message: __(
         'Enriched: {0} field(s) updated, {1} skipped. {2} credits left.',
@@ -209,8 +286,6 @@ async function onEnrich() {
       ),
       type: updated.length > 0 ? 'success' : 'warning',
     })
-    // Tell the parent to reload — new field values won't render in
-    // the side panel otherwise (frappe-ui caches doc data per name).
     emit('enriched', resp)
   } catch (e) {
     toast.create({
@@ -225,13 +300,13 @@ async function onEnrich() {
   }
 }
 
-// Exposed for tests — lets a Vitest spec drive the override cycling +
-// payload-building without mounting the full Dropdown tree.
+// Exposed for tests.
 defineExpose({
   overrides,
   advancedOptions,
   cycle,
-  badge,
-  creditsRemaining,
+  resetOverrides,
+  overrideCount,
+  status,
 })
 </script>

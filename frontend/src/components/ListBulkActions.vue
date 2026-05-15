@@ -316,17 +316,31 @@ function onLinkedInQuestorDone(resp) {
       type: 'success',
     })
   } else {
-    const failedSummary = failed
-      .slice(0, 3)
-      .map((f) => `${f.lead}: ${f.reason}`)
-      .join(' · ')
-    const more = failed.length > 3 ? ` (+${failed.length - 3} more)` : ''
-    toast.create({
-      message:
+    // v0.15.0 audit P0 #1 follow-up: when EVERY failed lead shares the
+    // same reason (e.g. "integration disabled"), collapse the toast to
+    // a single line so admins see ONE actionable message instead of N
+    // copies. Per-lead detail still lands in the console for grep.
+    const uniqueReasons = new Set(failed.map((f) => f.reason || ''))
+    let message
+    if (uniqueReasons.size === 1 && ok.length === 0) {
+      const onlyReason = [...uniqueReasons][0]
+      message =
+        __('All {0} enrichments skipped: {1}', [failed.length, onlyReason]) +
+        creditsSuffix
+    } else {
+      const failedSummary = failed
+        .slice(0, 3)
+        .map((f) => `${f.lead}: ${f.reason}`)
+        .join(' · ')
+      const more = failed.length > 3 ? ` (+${failed.length - 3} more)` : ''
+      message =
         __(
           'Enriched {0} ok, {1} skipped. {2}{3}',
           [ok.length, failed.length, failedSummary, more],
-        ) + creditsSuffix,
+        ) + creditsSuffix
+    }
+    toast.create({
+      message,
       type: ok.length > 0 ? 'warning' : 'error',
     })
     // eslint-disable-next-line no-console

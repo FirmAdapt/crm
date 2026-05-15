@@ -1,69 +1,119 @@
 <template>
   <!--
-    FirmAdapt Module LinkedIn Questor — bulk enrichment modal.
+    LinkedIn Questor — bulk enrichment modal.
 
-    Mirrors PushToAutokloseModal: a single confirm dialog with the
-    selection count, the worst-case credit cost, and a pair of toggles
-    for the two flags most worth surfacing at the bulk level (signals +
-    company data). Skills / certifications are left at the Settings
-    default to keep the modal scannable.
+    v0.15.0 UX hardening (fixes audit P0 #1, P1 #4, P1 #5):
 
-    On confirm: POSTs to
-      firmadapt_crm.integrations.linkedin_questor.api.bulk_enrich_leads
-    with `{lead_names, include_signals?, include_company?}`. Emits
-    `done(resp)` to the parent (ListBulkActions.vue), which renders the
-    result toast and reloads the list.
+      P0 #1 — Pre-flight integration status.
+        On mount we hit `get_integration_status` (cached, no upstream
+        API call). If the integration is disabled or unconfigured, we
+        swap the modal body to a clear "ask an admin" banner with a
+        deep-link to the Settings doctype, and the Enrich CTA is
+        replaced with "Open Settings" (admins) / disabled (non-admins).
+        Before v0.15, admins clicked Enrich on a disabled integration
+        and got N copies of the same "integration is disabled" error
+        in the toast — pure noise.
 
-    Worst-case credit cost per Lead is documented in Settings:
-      profile 1.5 + open_to_work 1 + open_profile 1 + recent_activity 2
-      + company 1 + cert 0.5 = 7 credits / Lead.
+      P1 #4 — Default-state visibility on the toggles.
+        Each toggle row now shows the resolved Settings default as a
+        small gray "default: on/off" chip. Admins can see at a glance
+        what they're about to override.
 
-    The actual cost is usually lower (Settings defaults turn some
-    sub-calls off, e.g. include_signals_default=0). We compute the
-    worst case so admins don't blow through monthly budget by accident.
+      P1 #5 — Reactive credit estimate.
+        The "Estimated cost" line now updates live as toggles change.
+        Was previously a static "N × 7 = 14 credits" worst-case that
+        never reflected the actual toggle state.
+
+    On confirm: POSTs to bulk_enrich_leads. Emits `done(resp)` to the
+    parent (ListBulkActions.vue) which renders the result toast.
   -->
   <Dialog
     v-model="show"
     :options="{
       title: __('Enrich selected leads from LinkedIn'),
       size: 'md',
-      actions: [
-        {
-          label: __('Enrich {0} leads', [selectionsCount]),
-          variant: 'solid',
-          theme: 'blue',
-          loading: enriching,
-          onClick: runBulk,
-        },
-        { label: __('Cancel') },
-      ],
+      actions: dialogActions,
     }"
   >
     <template #body-content>
-      <div class="space-y-4">
+      <!-- ── DISABLED / UNCONFIGURED STATE ───────────────────────── -->
+      <div v-if="statusLoaded && !canEnrich" class="space-y-3">
+        <div
+          class="rounded-md border border-outline-amber-3 bg-surface-amber-2 p-3"
+        >
+          <div class="text-sm font-medium text-ink-amber-9">
+            {{ disabledTitle }}
+          </div>
+          <div class="mt-1 text-sm text-ink-amber-9">
+            {{ disabledBody }}
+          </div>
+        </div>
+        <div class="text-xs text-ink-gray-5">
+          {{
+            __(
+              '{0} lead(s) selected. No credits will be charged until ' +
+                'an admin enables the integration.',
+              [selectionsCount],
+            )
+          }}
+        </div>
+      </div>
+
+      <!-- ── READY STATE ─────────────────────────────────────────── -->
+      <div v-else class="space-y-4">
         <div class="text-sm text-ink-gray-7">
           {{
             __(
-              'LinkedIn Questor will fetch each Lead\'s LinkedIn profile ' +
+              "LinkedIn Questor will fetch each Lead's LinkedIn profile " +
                 'and fill empty CRM fields (existing values are never ' +
                 'overwritten). Leads without a LinkedIn URL are skipped ' +
-                'server-side without burning credits. Worst-case cost: ' +
-                '{0} × 7 = {1} credits.',
-              [selectionsCount, worstCaseCredits],
+                'server-side without burning credits.',
             )
           }}
         </div>
 
-        <div class="space-y-2 rounded border border-outline-gray-2 p-3">
+        <div class="space-y-3 rounded border border-outline-gray-2 p-3">
+          <!-- Signals toggle with default-state chip -->
           <div class="flex items-center justify-between text-sm">
-            <label class="text-ink-gray-8">{{ __('Include signals') }}</label>
+            <div class="flex items-center gap-2">
+              <label class="text-ink-gray-8">{{ __('Include signals') }}</label>
+              <span
+                v-if="!signalsTouched"
+                class="rounded-full bg-surface-gray-2 px-2 py-0.5 text-xs text-ink-gray-7"
+              >
+                {{ __('default: {0}', [defaults.include_signals ? __('on') : __('off')]) }}
+              </span>
+              <span
+                v-else
+                class="rounded-full bg-surface-blue-2 px-2 py-0.5 text-xs font-medium text-ink-blue-9"
+              >
+                {{ __('override') }}
+              </span>
+            </div>
             <Switch v-model="includeSignals" />
           </div>
+
+          <!-- Company toggle with default-state chip -->
           <div class="flex items-center justify-between text-sm">
-            <label class="text-ink-gray-8">{{ __('Include company data') }}</label>
+            <div class="flex items-center gap-2">
+              <label class="text-ink-gray-8">{{ __('Include company data') }}</label>
+              <span
+                v-if="!companyTouched"
+                class="rounded-full bg-surface-gray-2 px-2 py-0.5 text-xs text-ink-gray-7"
+              >
+                {{ __('default: {0}', [defaults.include_company ? __('on') : __('off')]) }}
+              </span>
+              <span
+                v-else
+                class="rounded-full bg-surface-blue-2 px-2 py-0.5 text-xs font-medium text-ink-blue-9"
+              >
+                {{ __('override') }}
+              </span>
+            </div>
             <Switch v-model="includeCompany" />
           </div>
-          <div class="pt-1 text-xs text-ink-gray-5">
+
+          <div class="border-t pt-2 text-xs text-ink-gray-5">
             {{
               __(
                 'Skills + certifications use the LinkedIn Questor Settings ' +
@@ -73,13 +123,37 @@
             }}
           </div>
         </div>
+
+        <!-- Live credit estimate: reactive to toggle state -->
+        <div
+          class="flex items-center justify-between rounded border border-outline-gray-2 bg-surface-gray-1 px-3 py-2 text-sm"
+        >
+          <div class="text-ink-gray-7">
+            {{ __('Estimated cost (per Lead × {0} leads)', [selectionsCount]) }}
+          </div>
+          <div class="font-medium text-ink-gray-9">
+            ≈ {{ estimatedCredits }} {{ __('credit(s)') }}
+          </div>
+        </div>
+        <div
+          v-if="status.credits_remaining != null"
+          class="text-xs text-ink-gray-5"
+        >
+          {{
+            __(
+              'Last known balance: {0} credit(s). Live balance refreshed ' +
+                'on each enrichment.',
+              [status.credits_remaining],
+            )
+          }}
+        </div>
       </div>
     </template>
   </Dialog>
 </template>
 
 <script setup>
-import { Dialog, Switch, call } from 'frappe-ui'
+import { Dialog, Switch, call, createResource } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -98,24 +172,176 @@ const selectionsCount = computed(() => {
   return Object.keys(s).length
 })
 
-const worstCaseCredits = computed(() => selectionsCount.value * 7)
+// ─── Integration status (P0 #1 pre-flight) ───────────────────────────
+const status = ref({
+  enabled: false,
+  configured: false,
+  role_ok: false,
+  credits_remaining: null,
+  defaults: {
+    include_skills: false,
+    include_certifications: false,
+    include_signals: false,
+    include_company: false,
+  },
+  credit_costs: {
+    profile_base: 1.0,
+    profile_skills: 0.5,
+    profile_certs: 0.5,
+    signals_total: 4.0,
+    company: 1.0,
+  },
+})
+const statusLoaded = ref(false)
 
-// Both flags start at the Settings default (we represent that as
-// "leave the key off the payload"). Once the user clicks the Switch
-// they've committed to an explicit override — track that with a
-// "touched" flag per switch so we only send the keys they actually
-// touched. (Sending include_signals=false when they never toggled it
-// would clobber a Settings default of true.)
+const statusResource = createResource({
+  url: 'firmadapt_crm.integrations.linkedin_questor.api.get_integration_status',
+  auto: false,
+  onSuccess: (v) => {
+    status.value = { ...status.value, ...v }
+    statusLoaded.value = true
+  },
+  onError: () => {
+    status.value.enabled = false
+    status.value.configured = false
+    statusLoaded.value = true
+  },
+})
+
+// Re-fetch on every open so the admin sees fresh state (they may have
+// just enabled the integration in another tab).
+watch(show, (open) => {
+  if (open) {
+    statusLoaded.value = false
+    statusResource.fetch()
+    // Reset toggle/touched state so previous-session overrides don't leak.
+    includeSignals.value = false
+    includeCompany.value = false
+    signalsTouched.value = false
+    companyTouched.value = false
+  }
+})
+
+const defaults = computed(() => status.value.defaults || {})
+
+const canEnrich = computed(
+  () => status.value.enabled && status.value.configured,
+)
+
+const isAdmin = computed(() => status.value.role_ok)
+
+// Disabled-state copy. Different message depending on what's wrong:
+//   - Settings disabled                 → "ask admin to enable"
+//   - Settings enabled but no api_key   → "ask admin to enter the API key"
+//   - Caller has no role                → "ask admin for access"
+const disabledTitle = computed(() => {
+  if (!status.value.role_ok) return __('No access')
+  if (!status.value.configured) return __('LinkedIn Questor not configured')
+  return __('LinkedIn Questor is disabled')
+})
+const disabledBody = computed(() => {
+  if (!status.value.role_ok) {
+    return __(
+      'Your account does not have the Autoklose User role. ' +
+        'Ask an admin to grant it before enriching leads.',
+    )
+  }
+  if (!status.value.configured) {
+    return __(
+      'The LinkedIn Questor API key is not set. Open LinkedIn Questor ' +
+        'Settings to configure it (or set the LINKEDIN_QUESTOR_API_KEY ' +
+        'env var on the server).',
+    )
+  }
+  return __(
+    'The integration is currently disabled. Open LinkedIn Questor ' +
+      'Settings and flip Enabled on to allow enrichment calls.',
+  )
+})
+
+// ─── Toggle state ────────────────────────────────────────────────────
 const includeSignals = ref(false)
 const includeCompany = ref(false)
 const signalsTouched = ref(false)
 const companyTouched = ref(false)
 
-watch(includeSignals, () => (signalsTouched.value = true))
-watch(includeCompany, () => (companyTouched.value = true))
+watch(includeSignals, (_, old) => {
+  // ref starts at false; watcher fires once on init for that value if
+  // we change it programmatically. Only mark touched on a real change
+  // away from the initial value.
+  if (signalsTouched.value || _ !== old) signalsTouched.value = true
+})
+watch(includeCompany, (_, old) => {
+  if (companyTouched.value || _ !== old) companyTouched.value = true
+})
 
+// ─── Reactive credit estimate (P1 #5) ────────────────────────────────
+// Per-Lead cost depends on the RESOLVED include_* values, which are
+// the touched override OR the Settings default if untouched. We assume
+// worst case for skills + certs (the bulk modal doesn't expose toggles
+// for them; per-Lead overrides via the Dropdown still apply on the
+// per-Lead button, but the bulk path inherits Settings defaults).
+const estimatedCredits = computed(() => {
+  const costs = status.value.credit_costs || {}
+  const d = defaults.value
+
+  // Resolve effective values.
+  const wantSignals = signalsTouched.value ? includeSignals.value : !!d.include_signals
+  const wantCompany = companyTouched.value ? includeCompany.value : !!d.include_company
+  const wantSkills = !!d.include_skills
+  const wantCerts = !!d.include_certifications
+
+  // Build per-Lead cost.
+  let perLead = costs.profile_base ?? 1.0
+  if (wantSkills) perLead += costs.profile_skills ?? 0.5
+  if (wantCerts) perLead += costs.profile_certs ?? 0.5
+  if (wantSignals) perLead += costs.signals_total ?? 4.0
+  if (wantCompany) perLead += costs.company ?? 1.0
+
+  const total = perLead * selectionsCount.value
+  // Show with up to 1 decimal but trim ".0" for integer totals.
+  return Number.isInteger(total) ? String(total) : total.toFixed(1)
+})
+
+// ─── Dialog actions (reactive — disabled/enabled state) ─────────────
+const dialogActions = computed(() => {
+  if (statusLoaded.value && !canEnrich.value) {
+    if (isAdmin.value) {
+      return [
+        {
+          label: __('Open Settings'),
+          variant: 'solid',
+          theme: 'blue',
+          onClick: () => {
+            // Open Desk Settings in a new tab — admin's session is
+            // shared so they're already logged in.
+            window.open('/app/linkedin-questor-settings', '_blank', 'noopener')
+          },
+        },
+        { label: __('Close') },
+      ]
+    }
+    return [{ label: __('Close') }]
+  }
+  return [
+    {
+      label: __('Enrich {0} leads', [selectionsCount.value]),
+      variant: 'solid',
+      theme: 'blue',
+      loading: enriching.value,
+      onClick: runBulk,
+    },
+    { label: __('Cancel') },
+  ]
+})
+
+// ─── Action ──────────────────────────────────────────────────────────
 const enriching = ref(false)
 async function runBulk(close) {
+  // Defense-in-depth: even though the CTA is hidden in the disabled
+  // path, an admin could theoretically race a click during a state
+  // change. Re-check before firing.
+  if (!canEnrich.value) return
   const ids =
     props.selections instanceof Set
       ? Array.from(props.selections)
@@ -149,15 +375,11 @@ async function runBulk(close) {
   }
 }
 
-// Reset toggles + touched state when the modal reopens. Otherwise a
-// previous bulk's "I touched the switch" state leaks into the next
-// one and we'd send unintended overrides.
-watch(show, (open) => {
-  if (open) {
-    includeSignals.value = false
-    includeCompany.value = false
-    signalsTouched.value = false
-    companyTouched.value = false
-  }
+// Test affordances.
+defineExpose({
+  status,
+  canEnrich,
+  estimatedCredits,
+  defaults,
 })
 </script>
