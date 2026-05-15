@@ -111,6 +111,16 @@ const selectionsCount = computed(() => {
 // visibility filter ALSO applies (the user sees only campaigns whose
 // recipients map to their leads), so the result set is naturally
 // scoped to "campaigns this user can already work with."
+// pageLength sized for "every push-eligible campaign the user could
+// pick in one sitting." Pattern A scopes this list to campaigns whose
+// recipients map to leads the caller owns, so the per-user upper
+// bound is naturally small. But on a multi-admin prod cache (e.g. the
+// dev cache already crosses 135 eligible campaigns), 100 leaves
+// alphabetically-late campaigns invisible to the Autocomplete's
+// client-side filter — surfaced by the Playwright bulk-push spec.
+// 1000 covers every realistic case without paying the engineering
+// cost of server-side search-as-you-type, which would be the more
+// robust solution at scale.
 const campaignList = createListResource({
   doctype: 'Autoklose Campaign',
   fields: ['name', 'campaign_name', 'status', 'stats_recipients_total'],
@@ -118,7 +128,7 @@ const campaignList = createListResource({
     status: ['in', ['active', 'in_progress', 'paused']],
   },
   orderBy: 'campaign_name asc',
-  pageLength: 100,
+  pageLength: 1000,
   auto: true,
 })
 
