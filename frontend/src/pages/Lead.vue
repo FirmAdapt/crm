@@ -36,13 +36,18 @@
       </Dropdown>
       <!-- v0.12.0 — Twilio click-to-call + Vayne LinkedIn enrichment.
            Both buttons self-gate on Autoklose User role + their own
-           Settings.enabled flag. Order: Call → Enrich → Convert. -->
+           Settings.enabled flag. Order: Call → Enrich → BetterEnrich
+           → Convert.
+           BetterEnrich (added post-v0.12.0) wraps a separate paid
+           enrichment service with per-action quotas; the Dropdown
+           self-gates on role + the integration being configured. -->
       <CallButton
         v-if="doc.name"
         :lead-doc="doc"
         @initiated="reloadResources"
       />
       <EnrichButton :lead-doc="doc" @enriched="reloadResources" />
+      <BetterEnrichButton :lead-doc="doc" @enriched="reloadResources" />
       <Button
         :label="__('Convert to Deal')"
         variant="solid"
@@ -288,6 +293,9 @@ import LeadAutoklosePanel from '@/components/LeadAutoklosePanel.vue'
 // v0.12.0 — header buttons: Twilio Call + Vayne LinkedIn enrichment.
 import CallButton from '@/components/CallButton.vue'
 import EnrichButton from '@/components/EnrichButton.vue'
+// BetterEnrich — paid email/phone enrichment with per-user quotas
+// (independent of Vayne; both can coexist on the same Lead header).
+import BetterEnrichButton from '@/components/BetterEnrichButton.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {
   openWebsite,

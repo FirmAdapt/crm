@@ -354,6 +354,91 @@ function renderBulkEnrichResult(resp) {
   console.warn('[bulk_enrich_leads] skipped entries:', skipped)
 }
 
+// ---- Module BetterEnrich (bulk work-email find) ---------------------------
+//
+// BetterEnrich exposes per-user, per-hour and per-day quotas. The bulk
+// flow is sync (each lookup is small + cheap-ish), but the server may
+// rate-limit individual entries mid-batch. The response carries three
+// disjoint buckets:
+//   - ok:           [{lead, usage_log_name}]
+//   - rate_limited: [{lead, reason}]
+//   - failed:       [{lead, reason}] — missing prerequisites etc.
+// We surface the three counts in a single toast and dump the per-id
+// detail to the console for grep-ability (same shape as Vayne bulk).
+function bulkBetterEnrichWorkEmail(selections, unselectAll) {
+  const ids = Array.from(selections)
+  if (!ids.length) return
+  $dialog({
+    title: __('Find work emails for {0} lead(s)?', [ids.length]),
+    message: __(
+      'BetterEnrich will look up a work email for each selected Lead. ' +
+        'Estimated worst-case cost: {0} × 1 = {1} email credit(s). The ' +
+        'call also consumes your hourly + daily BetterEnrich quota — any ' +
+        'leads beyond your remaining quota will be marked rate-limited. ' +
+        'Leads missing prerequisites (name / company website) will be ' +
+        'skipped without burning credits.',
+      [ids.length, ids.length],
+    ),
+    variant: 'solid',
+    theme: 'blue',
+    actions: [
+      {
+        label: __('Run BetterEnrich'),
+        variant: 'solid',
+        theme: 'blue',
+        onClick: (close) => {
+          capture('betterenrich_bulk_find_work_email')
+          call(
+            'firmadapt_crm.integrations.betterenrich.api.bulk_find_work_email',
+            { lead_names: ids },
+          )
+            .then((resp) => {
+              renderBulkBetterEnrichResult(resp)
+              list.value?.reload()
+              unselectAll()
+              close()
+            })
+            .catch((e) => {
+              toast.create({
+                message:
+                  e?.messages?.join(', ') ||
+                  e?.message ||
+                  __('BetterEnrich bulk call failed.'),
+                type: 'error',
+              })
+            })
+        },
+      },
+      { label: __('Cancel') },
+    ],
+  })
+}
+
+function renderBulkBetterEnrichResult(resp) {
+  const ok = resp?.ok?.length ?? 0
+  const rateLimited = resp?.rate_limited?.length ?? 0
+  const failed = resp?.failed?.length ?? 0
+  const summary = __(
+    'BetterEnrich: {0} submitted, {1} rate-limited, {2} failed (no prerequisites)',
+    [ok, rateLimited, failed],
+  )
+  if (rateLimited === 0 && failed === 0) {
+    toast.create({ message: summary, type: 'success' })
+    return
+  }
+  toast.create({
+    message: summary,
+    type: ok > 0 ? 'warning' : 'error',
+  })
+  // Surface per-id detail for admin debugging — mirrors Vayne /
+  // Autoklose bulk toasts.
+  // eslint-disable-next-line no-console
+  console.warn('[bulk_find_work_email] details:', {
+    rate_limited: resp?.rate_limited ?? [],
+    failed: resp?.failed ?? [],
+  })
+}
+
 function onPushToAutokloseDone(resp) {
   // Modal calls $emit('done', resp) after the backend returns. resp
   // is the bulk_push_leads payload {ok: [...], failed: [...], total}.
@@ -436,6 +521,15 @@ function bulkActions(selections, unselectAll) {
     actions.push({
       label: __('Enrich from LinkedIn'),
       onClick: () => enrichFromLinkedin(selections, unselectAll),
+    })
+    // Module BetterEnrich: bulk work-email lookup. Distinct from Vayne
+    // (which scrapes a LinkedIn profile in full); BetterEnrich just
+    // returns the work email. Quota / rate-limit enforcement is server-
+    // side — partial results come back in the response and we surface
+    // ok / rate-limited / failed counts in a single toast.
+    actions.push({
+      label: __('Find work emails (BetterEnrich)'),
+      onClick: () => bulkBetterEnrichWorkEmail(selections, unselectAll),
     })
   }
 
