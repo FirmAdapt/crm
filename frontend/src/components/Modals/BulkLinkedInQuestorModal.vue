@@ -216,7 +216,12 @@ const statusLoaded = ref(false)
 
 const statusResource = createResource({
   url: 'firmadapt_crm.integrations.linkedin_questor.api.get_integration_status',
-  auto: false,
+  // auto:true so the resource fetches at component-mount time. The
+  // modal is rendered via `v-if="showLinkedInQuestorModal"` in
+  // ListBulkActions, so mount happens exactly when the admin opens
+  // the modal — same effect as a watcher with immediate:true, but
+  // matches the pattern LinkedInQuestorButton already uses.
+  auto: true,
   onSuccess: (v) => {
     status.value = { ...status.value, ...v }
     statusLoaded.value = true
@@ -228,8 +233,10 @@ const statusResource = createResource({
   },
 })
 
-// Re-fetch on every open so the admin sees fresh state (they may have
-// just enabled the integration in another tab).
+// `show` is also a defineModel that's `true` from mount. The earlier
+// watcher-only approach silently never fired (defineModel value
+// "changing from true to true" doesn't trigger). Refetch logic stays
+// here for the case where the modal is kept-alive and re-opened.
 watch(show, (open) => {
   if (open) {
     statusLoaded.value = false
