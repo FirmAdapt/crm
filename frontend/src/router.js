@@ -124,6 +124,17 @@ const routes = [
     component: () => import('@/pages/Campaign.vue'),
     props: true,
   },
+  // FirmAdapt v0.13.2 — admin-only landing page that lists every
+  // outbound integration (Autoklose, Twilio, Vayne, BetterEnrich) +
+  // deep-links to each integration's Settings doctype, user-limit
+  // list, and usage log. Until this lands, admins had to know the
+  // /app/<doctype-settings> URLs by heart. Sidebar visibility is
+  // gated on is_autoklose_admin server-side (see AppSidebar.vue).
+  {
+    path: '/integrations',
+    name: 'Integrations',
+    component: () => import('@/pages/Integrations.vue'),
+  },
   {
     path: '/data-import/doctype/:doctype',
     name: 'NewDataImport',

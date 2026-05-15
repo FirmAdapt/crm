@@ -155,6 +155,8 @@ import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
 import AlertTriangleIcon from '~icons/lucide/triangle-alert'
 // FirmAdapt Module 1: megaphone icon for the Autoklose Campaigns nav entry.
 import MegaphoneIcon from '~icons/lucide/megaphone'
+// FirmAdapt v0.13.2: cable icon for the admin-only Integrations nav entry.
+import CableIcon from '~icons/lucide/cable'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -258,6 +260,24 @@ const autokloseUserCheck = createResource({
   },
 })
 
+// FirmAdapt v0.13.2 — admin gate for the Integrations nav entry. The
+// Integrations page is purely a navigation hub linking out to the
+// Settings / User Limit / Usage Log doctypes for Autoklose, Twilio,
+// Vayne, BetterEnrich. Non-admins (regular Autoklose Users) don't
+// need to see it — they interact with integrations via per-Lead
+// buttons + bulk actions.
+const autokloseAdminFlag = ref(false)
+createResource({
+  url: 'firmadapt_crm.permissions.is_autoklose_admin',
+  auto: true,
+  onSuccess(v) {
+    autokloseAdminFlag.value = !!v
+  },
+  onError() {
+    autokloseAdminFlag.value = false
+  },
+})
+
 const links = [
   {
     label: 'Dashboard',
@@ -322,6 +342,17 @@ const links = [
     icon: MegaphoneIcon,
     to: 'Campaigns',
     condition: () => autokloseUserFlag.value,
+  },
+  // FirmAdapt v0.13.2: admin-only Integrations hub. Cards linking to
+  // each integration's Settings doctype + user-limit list + usage
+  // log. Hidden for non-admin users (Autoklose User role alone is
+  // not enough — needs the autokloseAdminFlag, which matches the
+  // is_autoklose_admin permission helper).
+  {
+    label: 'Integrations',
+    icon: CableIcon,
+    to: 'Integrations',
+    condition: () => autokloseAdminFlag.value,
   },
 ]
 
