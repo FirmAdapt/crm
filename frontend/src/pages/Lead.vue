@@ -34,10 +34,11 @@
           </Button>
         </template>
       </Dropdown>
-      <!-- v0.12.0 — Twilio click-to-call + Vayne LinkedIn enrichment.
+      <!-- v0.14.0 — Twilio click-to-call + LinkedIn Questor enrichment.
            Both buttons self-gate on Autoklose User role + their own
-           Settings.enabled flag. Order: Call → Enrich → BetterEnrich
-           → Convert.
+           Settings.enabled flag. Order: Call → LinkedIn Questor →
+           BetterEnrich → Convert.
+           LinkedIn Questor replaces the v0.12.0 Vayne enrichment slot.
            BetterEnrich (added post-v0.12.0) wraps a separate paid
            enrichment service with per-action quotas; the Dropdown
            self-gates on role + the integration being configured. -->
@@ -46,7 +47,7 @@
         :lead-doc="doc"
         @initiated="reloadResources"
       />
-      <EnrichButton :lead-doc="doc" @enriched="reloadResources" />
+      <LinkedInQuestorButton :lead-doc="doc" @enriched="reloadResources" />
       <BetterEnrichButton :lead-doc="doc" @enriched="reloadResources" />
       <Button
         :label="__('Convert to Deal')"
@@ -290,11 +291,13 @@ import LeadConflictBanner from '@/components/LeadConflictBanner.vue'
 // FirmAdapt Module 1 (Phase A.2 / Item 5) — side-panel widget that
 // lists Autoklose Campaigns whose recipients link to this Lead.
 import LeadAutoklosePanel from '@/components/LeadAutoklosePanel.vue'
-// v0.12.0 — header buttons: Twilio Call + Vayne LinkedIn enrichment.
+// v0.14.0 — header buttons: Twilio Call + LinkedIn Questor enrichment.
+// LinkedIn Questor replaces the v0.12.0 Vayne EnrichButton — same UX
+// slot, different RapidAPI-backed enrichment provider.
 import CallButton from '@/components/CallButton.vue'
-import EnrichButton from '@/components/EnrichButton.vue'
+import LinkedInQuestorButton from '@/components/LinkedInQuestorButton.vue'
 // BetterEnrich — paid email/phone enrichment with per-user quotas
-// (independent of Vayne; both can coexist on the same Lead header).
+// (independent of LinkedIn Questor; both can coexist on the Lead header).
 import BetterEnrichButton from '@/components/BetterEnrichButton.vue'
 import ConvertToDealModal from '@/components/Modals/ConvertToDealModal.vue'
 import {

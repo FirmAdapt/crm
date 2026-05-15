@@ -125,7 +125,7 @@ const routes = [
     props: true,
   },
   // FirmAdapt v0.13.2 — admin-only landing page that lists every
-  // outbound integration (Autoklose, Twilio, Vayne, BetterEnrich) +
+  // outbound integration (Autoklose, Twilio, LinkedIn Questor, BetterEnrich) +
   // deep-links to each integration's Settings doctype, user-limit
   // list, and usage log. Until this lands, admins had to know the
   // /app/<doctype-settings> URLs by heart. Sidebar visibility is
