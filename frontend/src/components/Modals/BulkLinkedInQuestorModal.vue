@@ -36,8 +36,28 @@
     }"
   >
     <template #body-content>
+      <!-- ── LOADING STATE ───────────────────────────────────────── -->
+      <!-- v0.15.0 hotfix: the original v-if ordering let the
+           ready-state (toggles) render BEFORE the status fetch
+           resolved. On prod, integration is disabled by default
+           and the toggle UI flashed for the half-second between
+           modal open and status arrival. Worse: on a slow network
+           an admin could even click Enrich during that window
+           before learning the integration is disabled. Resolve
+           three states explicitly — loading first, then either
+           the disabled banner or the ready toggles. -->
+      <div
+        v-if="!statusLoaded"
+        class="flex items-center justify-center py-8 text-sm text-ink-gray-5"
+      >
+        <span
+          class="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-ink-gray-4 border-t-transparent"
+        ></span>
+        {{ __('Checking LinkedIn Questor status…') }}
+      </div>
+
       <!-- ── DISABLED / UNCONFIGURED STATE ───────────────────────── -->
-      <div v-if="statusLoaded && !canEnrich" class="space-y-3">
+      <div v-else-if="!canEnrich" class="space-y-3">
         <div
           class="rounded-md border border-outline-amber-3 bg-surface-amber-2 p-3"
         >
@@ -305,7 +325,12 @@ const estimatedCredits = computed(() => {
 
 // ─── Dialog actions (reactive — disabled/enabled state) ─────────────
 const dialogActions = computed(() => {
-  if (statusLoaded.value && !canEnrich.value) {
+  // While status is still loading, only show Cancel — don't expose an
+  // Enrich CTA the admin could click before the gate state is known.
+  if (!statusLoaded.value) {
+    return [{ label: __('Cancel') }]
+  }
+  if (!canEnrich.value) {
     if (isAdmin.value) {
       return [
         {
