@@ -16,6 +16,17 @@ export default defineConfig(async ({ mode }) => {
         devOptions: {
           enabled: true,
         },
+        // The CRM bundle has grown past the workbox default (2 MiB)
+        // since v0.14.0 (Vayne → LinkedIn Questor + multiple new
+        // modules). Bump to 6 MiB so `useActiveTabManager-*.js` (≈2.8
+        // MiB) and the merged `index-*.css` (≈2.6 MiB) both get
+        // precached. Anything beyond this is a sign the SPA needs
+        // code-splitting via `build.rollupOptions.output.manualChunks`,
+        // not a higher cache ceiling — but for now this just unblocks
+        // the build.
+        workbox: {
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+        },
         manifest: {
           display: 'standalone',
           name: 'Frappe CRM',

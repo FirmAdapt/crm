@@ -3,11 +3,30 @@
     <template #left-header>
       <ViewBreadcrumbs v-model="viewControls" routeName="Campaigns" />
     </template>
-    <!-- No #right-header / "Create" button: Autoklose Campaign rows are
-         created on the Autoklose side and synced into the CRM. The CRM
-         side is read-only by design (Pattern A row visibility, doctype
-         is read_only). -->
+    <!-- Module 3b — admins can now create a new Autoklose campaign from
+         the CRM. Non-admins still see the read-only mirror only. The
+         Autoklose Campaign doctype itself remains read_only at the
+         field level (everything except the rows we author here is
+         populated by the sync engine); the create path POSTs to
+         Autoklose's `/api/campaigns` endpoint and re-syncs. -->
+    <template v-if="autokloseAdminFlag" #right-header>
+      <Button
+        variant="solid"
+        theme="blue"
+        icon-left="plus"
+        :label="__('Create')"
+        @click="openCreateModal"
+      />
+    </template>
   </LayoutHeader>
+
+  <!-- Mounted at the top level so closing + reopening within a session
+       doesn't lose form scaffolding state. -->
+  <CampaignCreateModal
+    v-if="showCreateModal"
+    v-model="showCreateModal"
+    @created="onCampaignCreated"
+  />
 
   <!-- Status chip filter row (decision B). Mirrors the colored badges used
        in both the Frappe Desk list (autoklose_campaign_list.js) and the
@@ -169,16 +188,58 @@ import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import IndicatorIcon from '@/components/Icons/IndicatorIcon.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import CampaignsListView from '@/components/ListViews/CampaignsListView.vue'
+import CampaignCreateModal from '@/components/Modals/CampaignCreateModal.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import KanbanView from '@/components/Kanban/KanbanView.vue'
 import ViewControls from '@/components/ViewControls.vue'
-import { Badge, FeatherIcon } from 'frappe-ui'
+import { Badge, Button, FeatherIcon, createResource, toast } from 'frappe-ui'
 import { useStorage } from '@vueuse/core'
 import { parseColor } from '@/utils'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ref, computed, watch } from 'vue'
 
 const route = useRoute()
+const router = useRouter()
+
+// Module 3b — Create button visibility + flow.
+//
+// Admin gate mirrors what the Campaign detail page uses (Module 2's
+// cadence buttons + Refresh now). Backend enforces the same gate via
+// `_autoklose_admin_or_throw`, so this is purely UX hiding.
+const autokloseAdminFlag = ref(false)
+createResource({
+  url: 'firmadapt_crm.permissions.is_autoklose_admin',
+  auto: true,
+  onSuccess: (v) => (autokloseAdminFlag.value = !!v),
+  onError: () => (autokloseAdminFlag.value = false),
+})
+
+const showCreateModal = ref(false)
+function openCreateModal() {
+  showCreateModal.value = true
+}
+function onCampaignCreated(resp) {
+  toast.create({
+    message: __("Campaign '{0}' created.", [
+      resp?.campaign_name || resp?.campaign_id || 'untitled',
+    ]),
+    type: 'success',
+  })
+  if (resp?.campaign_id) {
+    // Hand off to the detail page so the admin can add sequence steps
+    // immediately. The campaign starts in `draft` status; Module 2's
+    // Start button will appear in the detail-page header.
+    router.push({
+      name: 'Campaign',
+      params: { campaignId: resp.campaign_id },
+    })
+  } else {
+    // Defensive fallback: refresh the list so the new row appears
+    // even if we can't navigate (e.g. backend somehow returned no id
+    // but did succeed at the upstream API).
+    campaignsListView.value?.list?.reload?.()
+  }
+}
 
 const campaignsListView = ref(null)
 const campaigns = ref({})
