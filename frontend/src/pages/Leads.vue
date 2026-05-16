@@ -341,13 +341,22 @@ const leadsListView = ref(null)
 const showLeadModal = ref(false)
 
 // v0.16.2 — CSV import. Visibility gated on the same `create`
-// permission that allows Create above; reading the result off
-// `frappe.client.has_permission` matches the brief.
+// permission that allows the Create button above; reading the
+// result off `frappe.client.has_permission`.
+//
+// IMPORTANT: `frappe.client.has_permission` in this Frappe version
+// requires `docname` as a positional argument — calling it without
+// raises `TypeError: has_permission() missing 1 required positional
+// argument: 'docname'`. Pass an empty string for the doctype-level
+// "can create generally" probe (Frappe treats that as a doc-type-
+// wide check). Caught in the v0.16.2 prod Chrome MCP verification:
+// before this fix, the resource always errored → canCreateLead
+// stayed false → the Import CSV button never rendered.
 const showCsvImportModal = ref(false)
 const canCreateLead = ref(false)
 createResource({
   url: 'frappe.client.has_permission',
-  params: { doctype: 'CRM Lead', perm_type: 'create' },
+  params: { doctype: 'CRM Lead', docname: '', perm_type: 'create' },
   auto: true,
   onSuccess: (resp) => {
     // The endpoint returns `{has_permission: 0|1}`; some Frappe
