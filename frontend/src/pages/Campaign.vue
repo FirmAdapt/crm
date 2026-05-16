@@ -40,8 +40,68 @@
         :loading="refreshing"
         @click="onRefresh"
       />
+      <!-- Module 3c — Delete / Request deletion / Withdraw request.
+           Backend `get_user_deletion_capability` decides which of the
+           three buttons makes sense for the current caller; we just
+           render whichever one is non-null. Backend re-enforces the
+           gate on click so this is purely UX hiding. -->
+      <Button
+        v-if="deletionAction"
+        :label="deletionAction.label"
+        :icon-left="deletionAction.icon"
+        :theme="deletionAction.theme"
+        :variant="deletionAction.variant || 'subtle'"
+        :loading="deletionBusy"
+        @click="deletionAction.onClick"
+      />
     </template>
   </LayoutHeader>
+
+  <!-- Module 3c — admin-only banner when a pending deletion request
+       exists. Inline Approve / Reject controls let the admin act
+       without leaving the campaign detail page. Other admins see the
+       same banner; first-acter wins (the loser gets a clean
+       "already resolved" error). -->
+  <div
+    v-if="doc && deletionCap?.is_admin && deletionCap?.pending_request_for_campaign"
+    class="mx-5 mt-3 rounded-md border border-outline-amber-2 bg-surface-amber-1 px-4 py-3"
+  >
+    <div class="flex items-start gap-3">
+      <FeatherIcon name="alert-circle" class="h-4 w-4 mt-1 text-ink-amber-7 shrink-0" />
+      <div class="flex-1 text-sm text-ink-gray-9">
+        <div class="font-medium">
+          {{ __('Pending deletion request') }}
+        </div>
+        <div class="mt-1 text-ink-gray-7">
+          {{ __('From') }}
+          <span class="font-medium">{{ deletionCap.pending_request_for_campaign.requested_by }}</span>
+          <span v-if="deletionCap.pending_request_for_campaign.reason">
+            — {{ deletionCap.pending_request_for_campaign.reason }}
+          </span>
+          <span class="ml-2 text-xs text-ink-gray-5">
+            ({{ timeAgo(deletionCap.pending_request_for_campaign.requested_at) }})
+          </span>
+        </div>
+      </div>
+      <div class="flex shrink-0 gap-2">
+        <Button
+          variant="subtle"
+          size="sm"
+          :label="__('Reject')"
+          :loading="rejectingRequest"
+          @click="openRejectDialog(deletionCap.pending_request_for_campaign)"
+        />
+        <Button
+          variant="solid"
+          theme="red"
+          size="sm"
+          :label="__('Approve + delete')"
+          :loading="approvingRequest"
+          @click="openApproveDialog(deletionCap.pending_request_for_campaign)"
+        />
+      </div>
+    </div>
+  </div>
 
   <div
     v-if="campaign.loading && !doc"
@@ -525,6 +585,203 @@
       </p>
     </template>
   </Dialog>
+
+  <!-- =================== Module 3c modals =================== -->
+
+  <!-- Tier 1/2 direct delete -->
+  <Dialog
+    v-model="deleteConfirmOpen"
+    :options="{
+      title: __('Delete this campaign?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Delete campaign'),
+          variant: 'solid',
+          theme: 'red',
+          loading: deletionBusy,
+          onClick: runDelete,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            'Permanently removes the campaign from Autoklose AND the CRM ' +
+              'cache. Recipients, sequence steps, and engagement history ' +
+              'are removed too. This cannot be undone.',
+          )
+        }}
+      </p>
+      <p v-if="doc" class="mt-3 text-sm text-ink-gray-9">
+        <span class="text-ink-gray-5">{{ __('Campaign') }}:</span>
+        <span class="ml-1 font-medium">{{ doc.campaign_name || doc.name }}</span>
+      </p>
+      <div class="mt-3">
+        <label class="mb-1 block text-xs font-medium text-ink-gray-7">
+          {{ __('Reason (optional, for audit)') }}
+        </label>
+        <textarea
+          v-model="deleteReason"
+          class="w-full rounded border border-outline-gray-2 p-2 text-sm"
+          rows="2"
+        />
+      </div>
+    </template>
+  </Dialog>
+
+  <!-- Tier 3: request deletion -->
+  <Dialog
+    v-model="requestDialogOpen"
+    :options="{
+      title: __('Request campaign deletion?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Submit request'),
+          variant: 'solid',
+          theme: 'red',
+          loading: deletionBusy,
+          onClick: runRequest,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            "You don't have permission to delete campaigns directly. " +
+              'An admin will review your request and approve or reject it.',
+          )
+        }}
+      </p>
+      <div class="mt-3">
+        <label class="mb-1 block text-xs font-medium text-ink-gray-7">
+          {{ __('Reason') }}
+        </label>
+        <textarea
+          v-model="requestReason"
+          class="w-full rounded border border-outline-gray-2 p-2 text-sm"
+          :placeholder="__('Why should this campaign be deleted?')"
+          rows="3"
+        />
+      </div>
+    </template>
+  </Dialog>
+
+  <!-- Tier 3: withdraw a pending request -->
+  <Dialog
+    v-model="withdrawDialogOpen"
+    :options="{
+      title: __('Withdraw deletion request?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Withdraw request'),
+          variant: 'solid',
+          theme: 'gray',
+          loading: deletionBusy,
+          onClick: runWithdraw,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            'Your pending deletion request will be withdrawn. The campaign ' +
+              'remains in place; you can submit a fresh request later if needed.',
+          )
+        }}
+      </p>
+    </template>
+  </Dialog>
+
+  <!-- Admin: approve a pending request -->
+  <Dialog
+    v-model="approveDialogOpen"
+    :options="{
+      title: __('Approve + delete this campaign?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Approve + delete'),
+          variant: 'solid',
+          theme: 'red',
+          loading: approvingRequest,
+          onClick: runApprove,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            'Approving the request immediately deletes the campaign from ' +
+              'Autoklose and the CRM cache. Recipients, steps, and ' +
+              'engagement history are removed. This cannot be undone.',
+          )
+        }}
+      </p>
+      <p v-if="pendingApprove" class="mt-3 text-sm text-ink-gray-9">
+        <span class="text-ink-gray-5">{{ __('Requested by') }}:</span>
+        <span class="ml-1 font-medium">{{ pendingApprove.requested_by }}</span>
+        <span v-if="pendingApprove.reason" class="block text-ink-gray-7 mt-1">
+          {{ __('Reason') }}: {{ pendingApprove.reason }}
+        </span>
+      </p>
+    </template>
+  </Dialog>
+
+  <!-- Admin: reject a pending request -->
+  <Dialog
+    v-model="rejectDialogOpen"
+    :options="{
+      title: __('Reject this deletion request?'),
+      size: 'sm',
+      actions: [
+        {
+          label: __('Reject request'),
+          variant: 'solid',
+          theme: 'gray',
+          loading: rejectingRequest,
+          onClick: runReject,
+        },
+        { label: __('Cancel') },
+      ],
+    }"
+  >
+    <template #body-content>
+      <p class="text-sm text-ink-gray-7">
+        {{
+          __(
+            'The campaign stays in place. The requester sees the rejection ' +
+              'on their next page load.',
+          )
+        }}
+      </p>
+      <div class="mt-3">
+        <label class="mb-1 block text-xs font-medium text-ink-gray-7">
+          {{ __('Note to requester (optional)') }}
+        </label>
+        <textarea
+          v-model="rejectNote"
+          class="w-full rounded border border-outline-gray-2 p-2 text-sm"
+          :placeholder="__('e.g. campaign is still active, please pause first')"
+          rows="3"
+        />
+      </div>
+    </template>
+  </Dialog>
 </template>
 
 <script setup>
@@ -536,6 +793,7 @@ import {
   Breadcrumbs,
   Button,
   Dialog,
+  FeatherIcon,
   Tabs,
   call,
   createDocumentResource,
@@ -904,6 +1162,267 @@ async function runDeleteStep() {
     })
   } finally {
     deletingStep.value = false
+  }
+}
+
+// ----- Module 3c: Campaign deletion + request workflow --------------------
+//
+// Three-tier permission model. Backend `get_user_deletion_capability`
+// returns flags + any pending-request info; we render the right
+// button + (admin-only) the pending-request banner.
+
+const deletionCap = ref(null)
+const deletionCapResource = createResource({
+  url: 'firmadapt_crm.integrations.autoklose.campaign_deletion.get_user_deletion_capability',
+  auto: false,
+  onSuccess: (data) => {
+    deletionCap.value = data
+  },
+})
+function refreshDeletionCap() {
+  deletionCapResource.update({
+    params: { campaign_id: props.campaignId },
+  })
+  deletionCapResource.fetch()
+}
+watch(
+  () => props.campaignId,
+  (id) => {
+    if (id) refreshDeletionCap()
+  },
+  { immediate: true },
+)
+
+const deletionBusy = ref(false)
+
+// One of three things shows up depending on capability + pending state.
+// Returns `null` to suppress rendering entirely (e.g. caller has no
+// Autoklose role at all).
+const deletionAction = computed(() => {
+  const cap = deletionCap.value
+  if (!cap) return null
+  // Tier 1/2 — direct delete. Pending request (if any) is shown
+  // separately in the admin banner; the button always says Delete.
+  if (cap.can_delete) {
+    return {
+      key: 'delete',
+      label: __('Delete'),
+      icon: 'trash-2',
+      theme: 'red',
+      variant: 'subtle',
+      onClick: openDeleteDialog,
+    }
+  }
+  // Tier 3 with an existing pending request — show Withdraw.
+  if (cap.pending_request_for_user) {
+    return {
+      key: 'withdraw',
+      label: __('Withdraw request'),
+      icon: 'rotate-ccw',
+      theme: 'gray',
+      variant: 'subtle',
+      onClick: openWithdrawDialog,
+    }
+  }
+  // Tier 3 — submit a request.
+  if (cap.can_request) {
+    return {
+      key: 'request',
+      label: __('Request deletion'),
+      icon: 'trash-2',
+      theme: 'red',
+      variant: 'subtle',
+      onClick: openRequestDialog,
+    }
+  }
+  return null
+})
+
+// ---- Direct delete (tier 1/2) ----
+const deleteConfirmOpen = ref(false)
+const deleteReason = ref('')
+function openDeleteDialog() {
+  deleteReason.value = ''
+  deleteConfirmOpen.value = true
+}
+async function runDelete() {
+  deletionBusy.value = true
+  try {
+    const resp = await call(
+      'firmadapt_crm.integrations.autoklose.campaign_deletion.delete_campaign',
+      {
+        campaign_id: props.campaignId,
+        reason: deleteReason.value || '',
+      },
+    )
+    toast.create({
+      message: __("Campaign '{0}' deleted.", [
+        resp?.campaign_name || props.campaignId,
+      ]),
+      type: 'success',
+    })
+    deleteConfirmOpen.value = false
+    // Navigate back to the list — the doc no longer exists here.
+    router.push({ name: 'Campaigns', params: { viewType: 'list' } })
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        __('Delete failed.'),
+      type: 'error',
+    })
+  } finally {
+    deletionBusy.value = false
+  }
+}
+
+// ---- Request deletion (tier 3) ----
+const requestDialogOpen = ref(false)
+const requestReason = ref('')
+function openRequestDialog() {
+  requestReason.value = ''
+  requestDialogOpen.value = true
+}
+async function runRequest() {
+  deletionBusy.value = true
+  try {
+    const resp = await call(
+      'firmadapt_crm.integrations.autoklose.campaign_deletion.request_campaign_deletion',
+      {
+        campaign_id: props.campaignId,
+        reason: requestReason.value || '',
+      },
+    )
+    toast.create({
+      message: resp?.already_existed
+        ? __('You already have a pending request for this campaign.')
+        : __('Deletion request submitted. An admin will review it.'),
+      type: 'success',
+    })
+    requestDialogOpen.value = false
+    refreshDeletionCap()
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        __('Request failed.'),
+      type: 'error',
+    })
+  } finally {
+    deletionBusy.value = false
+  }
+}
+
+// ---- Withdraw request (tier 3, owner-only) ----
+const withdrawDialogOpen = ref(false)
+function openWithdrawDialog() {
+  withdrawDialogOpen.value = true
+}
+async function runWithdraw() {
+  const rn = deletionCap.value?.pending_request_for_user?.name
+  if (!rn) return
+  deletionBusy.value = true
+  try {
+    await call(
+      'firmadapt_crm.integrations.autoklose.campaign_deletion.withdraw_campaign_deletion_request',
+      { request_name: rn },
+    )
+    toast.create({
+      message: __('Request withdrawn.'),
+      type: 'success',
+    })
+    withdrawDialogOpen.value = false
+    refreshDeletionCap()
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        __('Withdraw failed.'),
+      type: 'error',
+    })
+  } finally {
+    deletionBusy.value = false
+  }
+}
+
+// ---- Admin: approve / reject a pending request ----
+const approveDialogOpen = ref(false)
+const approvingRequest = ref(false)
+const pendingApprove = ref(null)
+function openApproveDialog(req) {
+  pendingApprove.value = req
+  approveDialogOpen.value = true
+}
+async function runApprove() {
+  const req = pendingApprove.value
+  if (!req) return
+  approvingRequest.value = true
+  try {
+    const resp = await call(
+      'firmadapt_crm.integrations.autoklose.campaign_deletion.approve_campaign_deletion_request',
+      { request_name: req.name },
+    )
+    toast.create({
+      message: __("Approved + deleted campaign '{0}'.", [
+        resp?.campaign_name || props.campaignId,
+      ]),
+      type: 'success',
+    })
+    approveDialogOpen.value = false
+    router.push({ name: 'Campaigns', params: { viewType: 'list' } })
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        __('Approve failed.'),
+      type: 'error',
+    })
+  } finally {
+    approvingRequest.value = false
+  }
+}
+
+const rejectDialogOpen = ref(false)
+const rejectingRequest = ref(false)
+const pendingReject = ref(null)
+const rejectNote = ref('')
+function openRejectDialog(req) {
+  pendingReject.value = req
+  rejectNote.value = ''
+  rejectDialogOpen.value = true
+}
+async function runReject() {
+  const req = pendingReject.value
+  if (!req) return
+  rejectingRequest.value = true
+  try {
+    await call(
+      'firmadapt_crm.integrations.autoklose.campaign_deletion.reject_campaign_deletion_request',
+      {
+        request_name: req.name,
+        admin_note: rejectNote.value || '',
+      },
+    )
+    toast.create({
+      message: __('Request rejected.'),
+      type: 'success',
+    })
+    rejectDialogOpen.value = false
+    refreshDeletionCap()
+  } catch (e) {
+    toast.create({
+      message:
+        e?.messages?.join(', ') ||
+        e?.message ||
+        __('Reject failed.'),
+      type: 'error',
+    })
+  } finally {
+    rejectingRequest.value = false
   }
 }
 
