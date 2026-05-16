@@ -8,6 +8,17 @@
         v-if="leadsListView?.customListActions"
         :actions="leadsListView.customListActions"
       />
+      <!-- v0.16.2 — Import CSV button. Gated on the same permission as
+           Create (anyone who can create a Lead can also bulk-import).
+           Frappe's `frappe.client.has_permission` returns the permitted
+           ptype list; we read `create` off it. Hides the button while
+           the check is pending so non-admins never see a flash. -->
+      <Button
+        v-if="canCreateLead"
+        :label="__('Import CSV')"
+        iconLeft="upload"
+        @click="showCsvImportModal = true"
+      />
       <Button
         variant="solid"
         :label="__('Create')"
@@ -265,6 +276,11 @@
     v-model="showLeadModal"
     :defaults="defaults"
   />
+  <CsvImportModal
+    v-if="showCsvImportModal"
+    v-model="showCsvImportModal"
+    @done="onCsvImportDone"
+  />
   <NoteModal
     v-if="showNoteModal"
     v-model="showNoteModal"
@@ -299,6 +315,7 @@ import KanbanView from '@/components/Kanban/KanbanView.vue'
 import LeadModal from '@/components/Modals/LeadModal.vue'
 import NoteModal from '@/components/Modals/NoteModal.vue'
 import TaskModal from '@/components/Modals/TaskModal.vue'
+import CsvImportModal from '@/components/Modals/CsvImportModal.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -307,7 +324,7 @@ import { statusesStore } from '@/stores/statuses'
 import { callEnabled } from '@/composables/settings'
 import { useBroadcast } from '@/composables/useBroadcast'
 import { formatDate, timeAgo, website, formatTime } from '@/utils'
-import { Avatar, Tooltip, Dropdown } from 'frappe-ui'
+import { Avatar, Tooltip, Dropdown, createResource, toast } from 'frappe-ui'
 import { useRoute } from 'vue-router'
 import { ref, computed, reactive, h } from 'vue'
 
@@ -322,6 +339,48 @@ const route = useRoute()
 
 const leadsListView = ref(null)
 const showLeadModal = ref(false)
+
+// v0.16.2 — CSV import. Visibility gated on the same `create`
+// permission that allows Create above; reading the result off
+// `frappe.client.has_permission` matches the brief.
+const showCsvImportModal = ref(false)
+const canCreateLead = ref(false)
+createResource({
+  url: 'frappe.client.has_permission',
+  params: { doctype: 'CRM Lead', perm_type: 'create' },
+  auto: true,
+  onSuccess: (resp) => {
+    // The endpoint returns `{has_permission: 0|1}`; some Frappe
+    // versions return the bare bool. Coerce defensively.
+    if (resp && typeof resp === 'object') {
+      canCreateLead.value = !!resp.has_permission
+    } else {
+      canCreateLead.value = !!resp
+    }
+  },
+  onError: () => (canCreateLead.value = false),
+})
+
+function onCsvImportDone(payload) {
+  toast.create({
+    message: __('Import started — {0} row(s) queued.', [
+      payload?.total_rows ?? 0,
+    ]),
+    type: 'success',
+  })
+  // Surface a clickable link via a second toast so the admin can jump
+  // straight into the Desk Data Import page to watch progress / see
+  // per-row errors. Plain anchor inside the toast body — frappe-ui
+  // toast supports HTML message content.
+  if (payload?.desk_url) {
+    toast.create({
+      message: __('Open {0} to watch progress.', [
+        `<a class="underline" href="${payload.desk_url}" target="_blank" rel="noopener">Data Import</a>`,
+      ]),
+      type: 'success',
+    })
+  }
+}
 
 on('trigger_lead_create', (data) => {
   showLeadModal.value = Boolean(data)
