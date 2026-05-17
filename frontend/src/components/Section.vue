@@ -30,18 +30,16 @@
         <slot name="actions"></slot>
       </div>
     </slot>
-    <transition
-      enter-active-class="duration-300 ease-in"
-      leave-active-class="duration-300 ease-[cubic-bezier(0, 1, 0.5, 1)]"
-      enter-to-class="max-h-[200px] overflow-hidden"
-      leave-from-class="max-h-[200px] overflow-hidden"
-      enter-from-class="max-h-0 overflow-hidden"
-      leave-to-class="max-h-0 overflow-hidden"
-    >
-      <div v-show="opened" class="columns" v-bind="$attrs">
-        <slot v-bind="{ opened, open, close, toggle }" />
-      </div>
-    </transition>
+    <!-- v0.16.9 (firmadapt) — dropped the `<transition>` wrapper that
+         animated `max-h-[200px]` between 0/200. It worked fine for
+         individual chevron clicks on small sections but locked
+         taller sections at 200px and prevented `v-show`'s
+         `display:none` from applying when 36 sections leave at once
+         (Expand/Collapse all). Plain v-show toggles instantly —
+         acceptable UX for a bulk affordance. -->
+    <div v-show="opened" class="columns" v-bind="$attrs">
+      <slot v-bind="{ opened, open, close, toggle }" />
+    </div>
   </div>
 </template>
 <script setup>
