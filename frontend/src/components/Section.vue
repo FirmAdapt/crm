@@ -45,7 +45,7 @@
   </div>
 </template>
 <script setup>
-import { ref } from 'vue'
+import { ref, inject, watch } from 'vue'
 
 const props = defineProps({
   label: { type: String, default: '' },
@@ -70,6 +70,30 @@ function open() {
 
 function close() {
   opened.value = false
+}
+
+// v0.16.8 (firmadapt) — optional broadcast channel so an ancestor
+// (Lead.vue) can flip every Section's `opened` state in one shot
+// for the "Expand all" / "Collapse all" affordances added to the
+// lead detail page header. The signal is a ref whose `.value` is a
+// `{ expand, collapse }` pair of monotonically-increasing counters;
+// sections watch each counter separately so re-clicking the same
+// button re-applies the state (so a user can expand all → manually
+// collapse one → expand all again and get back to full).
+const sectionExpandSignal = inject('sectionExpandSignal', null)
+if (sectionExpandSignal) {
+  watch(
+    () => sectionExpandSignal.value?.expand,
+    () => {
+      if (props.collapsible) opened.value = true
+    },
+  )
+  watch(
+    () => sectionExpandSignal.value?.collapse,
+    () => {
+      if (props.collapsible) opened.value = false
+    },
+  )
 }
 </script>
 <script>

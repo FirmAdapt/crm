@@ -42,6 +42,24 @@
            BetterEnrich (added post-v0.12.0) wraps a separate paid
            enrichment service with per-action quotas; the Dropdown
            self-gates on role + the integration being configured. -->
+      <!-- v0.16.8 (firmadapt) — one-click expand/collapse for every
+           section on the Data tab + Side Panel. Wired via the
+           `sectionExpandSignal` provide/inject channel; Section.vue
+           watches the counters and toggles its local `opened` ref. -->
+      <Tooltip :text="__('Expand all sections (Data tab + side panel)')">
+        <Button
+          :label="__('Expand all')"
+          iconLeft="chevrons-down"
+          @click="expandAllSections"
+        />
+      </Tooltip>
+      <Tooltip :text="__('Collapse all sections (Data tab + side panel)')">
+        <Button
+          :label="__('Collapse all')"
+          iconLeft="chevrons-up"
+          @click="collapseAllSections"
+        />
+      </Tooltip>
       <CallButton
         v-if="doc.name"
         :lead-doc="doc"
@@ -326,7 +344,7 @@ import {
   usePageMeta,
   toast,
 } from 'frappe-ui'
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
 
@@ -349,6 +367,29 @@ const errorMessage = ref('')
 const showDeleteLinkedDocModal = ref(false)
 const showConvertToDealModal = ref(false)
 const showFilesUploader = ref(false)
+
+// v0.16.8 (firmadapt) — provide a shared signal so DataFields and
+// SidePanelLayout's nested Section components react to one
+// Expand all / Collapse all click in the lead detail header. Each
+// counter is monotonically incremented on click; sections watch
+// each counter separately so re-clicking the same button
+// re-applies the state (lets a user expand all, manually collapse
+// one section, then expand all again and have it open again).
+const sectionExpandSignal = ref({ expand: 0, collapse: 0 })
+provide('sectionExpandSignal', sectionExpandSignal)
+
+function expandAllSections() {
+  sectionExpandSignal.value = {
+    ...sectionExpandSignal.value,
+    expand: sectionExpandSignal.value.expand + 1,
+  }
+}
+function collapseAllSections() {
+  sectionExpandSignal.value = {
+    ...sectionExpandSignal.value,
+    collapse: sectionExpandSignal.value.collapse + 1,
+  }
+}
 
 const {
   triggerOnChange,
