@@ -92,11 +92,20 @@ provide('isGridRow', props.isGridRow)
 provide('fieldLayoutContext', props.context)
 </script>
 <style scoped>
-.section:not(:has(.field)) {
-  display: none;
-}
+/*
+ * v0.16.7 (firmadapt) — the upstream rule
+ *   .section:not(:has(.field)) { display: none; }
+ * collapsed any section whose fields were all hidden by
+ * Field.vue::isFieldVisible (typically read-only + empty). Combined
+ * with our v0.16.7 flip to `?? 0` in that function, this rule is no
+ * longer needed and was actively wrong — it dropped sections we
+ * explicitly placed in the layout (Identity, Lost, SLA, Products,
+ * Facebook ingest, Autoklose sync, Sync metadata) just because their
+ * fields were null on a given lead. Remove it so every section
+ * renders.
+ */
 
-.section:has(.field):nth-child(1 of .section:has(.field)) {
+.section:nth-child(1 of .section) {
   border-top: none;
   margin-top: 0;
   padding-top: 0;

@@ -519,9 +519,15 @@ function isFieldVisible(field, scriptHidden) {
   let readOnlyField =
     field.read_only || field.fieldtype === 'Read Only' ? true : false
 
+  // v0.16.7 (firmadapt) — flipped default from `?? 1` to `?? 0` so empty
+  // read-only fields render with their placeholder. Paired with the
+  // `.section:not(:has(.field))` CSS override in FieldLayout.vue, this
+  // ensures every field placed in the layout is visible on the detail
+  // page even when its value is null — required so the SPA Data tab
+  // matches the export CSV column set 1:1.
   let hideEmptyReadOnlyField =
     isNull(data.value[field.fieldname]) &&
-    Number(window.sysdefaults?.hide_empty_read_only_fields ?? 1)
+    Number(window.sysdefaults?.hide_empty_read_only_fields ?? 0)
 
   let showReadOnlyField = readOnlyField && !hideEmptyReadOnlyField
 
