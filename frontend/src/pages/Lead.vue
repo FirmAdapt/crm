@@ -344,7 +344,7 @@ import {
   usePageMeta,
   toast,
 } from 'frappe-ui'
-import { ref, computed, watch, nextTick, onMounted, provide } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
 
@@ -368,27 +368,16 @@ const showDeleteLinkedDocModal = ref(false)
 const showConvertToDealModal = ref(false)
 const showFilesUploader = ref(false)
 
-// v0.16.8 (firmadapt) — provide a shared signal so DataFields and
-// SidePanelLayout's nested Section components react to one
-// Expand all / Collapse all click in the lead detail header. Each
-// counter is monotonically incremented on click; sections watch
-// each counter separately so re-clicking the same button
-// re-applies the state (lets a user expand all, manually collapse
-// one section, then expand all again and have it open again).
-const sectionExpandSignal = ref({ expand: 0, collapse: 0 })
-provide('sectionExpandSignal', sectionExpandSignal)
-
+// v0.16.8 (firmadapt) — broadcast events so every Section.vue
+// instance (Data tab + Side Panel) flips its `opened` state in one
+// click. Window CustomEvents instead of provide/inject reactivity
+// because the latter had a minifier-related edge case on the
+// Collapse path. Every Section.vue mounts a listener.
 function expandAllSections() {
-  sectionExpandSignal.value = {
-    ...sectionExpandSignal.value,
-    expand: sectionExpandSignal.value.expand + 1,
-  }
+  window.dispatchEvent(new CustomEvent('frappe-crm:expand-all-sections'))
 }
 function collapseAllSections() {
-  sectionExpandSignal.value = {
-    ...sectionExpandSignal.value,
-    collapse: sectionExpandSignal.value.collapse + 1,
-  }
+  window.dispatchEvent(new CustomEvent('frappe-crm:collapse-all-sections'))
 }
 
 const {

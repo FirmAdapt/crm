@@ -45,7 +45,7 @@
   </div>
 </template>
 <script setup>
-import { ref, inject, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   label: { type: String, default: '' },
@@ -72,29 +72,28 @@ function close() {
   opened.value = false
 }
 
-// v0.16.8 (firmadapt) — optional broadcast channel so an ancestor
-// (Lead.vue) can flip every Section's `opened` state in one shot
-// for the "Expand all" / "Collapse all" affordances added to the
-// lead detail page header. The signal is a ref whose `.value` is a
-// `{ expand, collapse }` pair of monotonically-increasing counters;
-// sections watch each counter separately so re-clicking the same
-// button re-applies the state (so a user can expand all → manually
-// collapse one → expand all again and get back to full).
-const sectionExpandSignal = inject('sectionExpandSignal', null)
-if (sectionExpandSignal) {
-  watch(
-    () => sectionExpandSignal.value?.expand,
-    () => {
-      if (props.collapsible) opened.value = true
-    },
-  )
-  watch(
-    () => sectionExpandSignal.value?.collapse,
-    () => {
-      if (props.collapsible) opened.value = false
-    },
-  )
+// v0.16.8 (firmadapt) — global broadcast channel so the lead detail
+// page (Lead.vue) can flip every Section's `opened` state in one
+// click for the "Expand all" / "Collapse all" affordances. We use
+// window CustomEvents instead of provide/inject because the
+// provide/inject + reactive watch path failed to fire reliably on
+// the Collapse handler in production builds (likely a minifier
+// edge case around two near-identical watchers). Events are
+// simpler and unambiguous: dispatch → every Section listener fires.
+function onExpandAll() {
+  if (props.collapsible) opened.value = true
 }
+function onCollapseAll() {
+  if (props.collapsible) opened.value = false
+}
+onMounted(() => {
+  window.addEventListener('frappe-crm:expand-all-sections', onExpandAll)
+  window.addEventListener('frappe-crm:collapse-all-sections', onCollapseAll)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('frappe-crm:expand-all-sections', onExpandAll)
+  window.removeEventListener('frappe-crm:collapse-all-sections', onCollapseAll)
+})
 </script>
 <script>
 export default {
