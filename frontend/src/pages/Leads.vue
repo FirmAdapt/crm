@@ -19,6 +19,16 @@
         iconLeft="upload"
         @click="showCsvImportModal = true"
       />
+      <!-- v0.16.4 — Export CSV. Visible to anyone who can read
+           CRM Lead. Hits firmadapt_crm.leads_export.export_leads_csv
+           and triggers a browser download. Loading flag prevents
+           double-clicks while the worker streams rows back. -->
+      <Button
+        :label="__('Export CSV')"
+        iconLeft="download"
+        :loading="exportLoading"
+        @click="onExportCsv"
+      />
       <Button
         variant="solid"
         :label="__('Create')"
@@ -369,6 +379,69 @@ createResource({
   },
   onError: () => (canCreateLead.value = false),
 })
+
+// v0.16.4 — CSV export. Hits firmadapt_crm.leads_export.export_leads_csv
+// which returns `{filename, content, row_count, column_count}` for every
+// native + custom_* field on CRM Lead, including the 13 new fields added
+// in v0.16.4 (custom_company_phone, scoring metadata). Passes the current
+// view's filters so the user gets the rows they see.
+const exportLoading = ref(false)
+function onExportCsv() {
+  if (exportLoading.value) return
+  exportLoading.value = true
+
+  // The SPA stores filters on the ViewControls list resource. Read them
+  // off the live `leads` resource if present; otherwise export with no
+  // filter (capped at 50k rows server-side).
+  const filters = leads.value?.params?.filters || leads.value?.filters || {}
+
+  createResource({
+    url: 'firmadapt_crm.leads_export.export_leads_csv',
+    params: {
+      filters: JSON.stringify(filters),
+      order_by: leads.value?.params?.order_by || 'modified desc',
+    },
+    auto: true,
+    onSuccess: (resp) => {
+      try {
+        if (!resp || typeof resp !== 'object' || !resp.content) {
+          toast.create({
+            message: __('Export returned no data.'),
+            type: 'error',
+          })
+          return
+        }
+        // Trigger browser download via a Blob URL — no need to attach
+        // the export as a File doctype row.
+        const blob = new Blob([resp.content], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = resp.filename || 'crm_leads.csv'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        toast.create({
+          message: __('Exported {0} lead(s) across {1} column(s).', [
+            resp.row_count ?? 0,
+            resp.column_count ?? 0,
+          ]),
+          type: 'success',
+        })
+      } finally {
+        exportLoading.value = false
+      }
+    },
+    onError: (err) => {
+      exportLoading.value = false
+      toast.create({
+        message: __('Export failed: {0}', [err?.message || String(err)]),
+        type: 'error',
+      })
+    },
+  })
+}
 
 function onCsvImportDone(payload) {
   toast.create({
